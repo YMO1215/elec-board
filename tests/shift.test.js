@@ -7,15 +7,18 @@ import { activeOf, addTask, initialState, moveTask, parse, setNote, tasksOf, upd
 
 const row = (iso) => ["p1", "p2", "p3", "p4"].map((p) => shiftOn(p, iso));
 
-test("anchor: 10/1 is 담당자1 야간, 담당자2 비번, 담당자3 주간", () => {
+test("owner's facts: 10/1 is 담당자1 야간 · 담당자2 비번 · 담당자3 주간, and 담당자1's first 주간 is 9/28", () => {
   assert.deepEqual(row("2026-10-01"), ["야", "비", "주", null]);
+  const days = ["2026-09-27", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04"];
+  // 비 | 주 주 | 야 야 | 비 비 | 주 — the 28th starts the day-shift block, the 29th is only its second day
+  assert.deepEqual(days.map((d) => shiftOn("p1", d)), ["비", "주", "주", "야", "야", "비", "비", "주"]);
 });
 
 test("주주야야비비 repeats every 6 days for each person", () => {
   const days = ["01", "02", "03", "04", "05", "06", "07"].map((d) => `2026-10-${d}`);
-  assert.deepEqual(days.map((d) => shiftOn("p3", d)), ["주", "주", "야", "야", "비", "비", "주"]);
-  assert.deepEqual(days.map((d) => shiftOn("p1", d)), ["야", "야", "비", "비", "주", "주", "야"]);
-  assert.deepEqual(days.map((d) => shiftOn("p2", d)), ["비", "비", "주", "주", "야", "야", "비"]);
+  assert.deepEqual(days.map((d) => shiftOn("p3", d)), ["주", "야", "야", "비", "비", "주", "주"]);
+  assert.deepEqual(days.map((d) => shiftOn("p1", d)), ["야", "비", "비", "주", "주", "야", "야"]);
+  assert.deepEqual(days.map((d) => shiftOn("p2", d)), ["비", "주", "주", "야", "야", "비", "비"]);
 });
 
 test("every day exactly one team is on day, night and off", () => {
@@ -26,12 +29,13 @@ test("every day exactly one team is on day, night and off", () => {
 });
 
 test("works before the anchor and across month/year ends", () => {
-  assert.deepEqual(row("2026-09-30"), ["주", "야", "비", null]);
+  assert.deepEqual(row("2026-09-28"), ["주", "야", "비", null]);
+  assert.deepEqual(row("2026-09-30"), ["야", "비", "주", null]);
   assert.deepEqual(row("2026-09-25"), row("2026-10-01")); // exactly one cycle earlier
-  // 10/1 -> 12/31 is 91 days (91 % 6 = 1): 담당자3 주 1일차 -> 2일차, 담당자1 야 1일차 -> 2일차
-  assert.deepEqual(row("2026-12-31"), ["야", "비", "주", null]);
-  assert.deepEqual([shiftOn("p3", "2026-12-31"), shiftOn("p3", "2027-01-01")], ["주", "야"]);
-  assert.deepEqual([shiftOn("p1", "2026-12-31"), shiftOn("p1", "2027-01-01")], ["야", "비"]);
+  // 9/30 -> 12/31 is 92 days (92 % 6 = 2)
+  assert.deepEqual(row("2026-12-31"), ["비", "주", "야", null]);
+  assert.deepEqual([shiftOn("p3", "2026-12-31"), shiftOn("p3", "2027-01-01")], ["야", "야"]);
+  assert.deepEqual([shiftOn("p1", "2026-12-31"), shiftOn("p1", "2027-01-01")], ["비", "비"]);
 });
 
 test("month grid is Sunday-first and covers the whole month", () => {

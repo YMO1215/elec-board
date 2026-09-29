@@ -1,13 +1,14 @@
 // 3조 2교대 (주주야야비비, 6일 주기). Pure functions, unit tested.
 //
 // 기준(사용자 지정): 2026-10-01 — 담당자1 야간, 담당자2 비번, 담당자3 주간.
-// 세 조는 2일씩 어긋나 돈다. 기준일을 각 블록의 "첫째 날"로 본다
-// (주간 1일차 · 야간 1일차 · 비번 1일차). 둘째 날이 기준이라면 ANCHOR 를 하루 당기면 된다.
+// 세 조는 2일씩 어긋나 돈다. 10/1 은 각 블록의 "둘째 날"이다
+// (담당자1 = 9/28 주간 시작 → 28·29 주간, 30·1일 야간). 그래서 기준 위치(ANCHOR)는 10/1 이 아니라
+// 그 하루 전(9/30)이고, TEAMS 는 ANCHOR 날의 CYCLE 위치다. 소유자 정정 2026-09-30.
 
 export const CYCLE = ["주", "주", "야", "야", "비", "비"];
 export const SHIFT_LABEL = { 주: "주간", 야: "야간", 비: "비번" };
 export const SHIFT_KEY = { 주: "day", 야: "night", 비: "off" };
-export const ANCHOR = "2026-10-01";
+export const ANCHOR = "2026-09-30";
 // person id -> position in CYCLE on ANCHOR
 export const TEAMS = { p3: 0, p1: 2, p2: 4 };
 export const SHIFT_PEOPLE = ["p1", "p2", "p3"];

@@ -3,40 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#2a221c">
-  <title>업무 대자보 — 4인 자석 보드</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23e2483d'/%3E%3Ccircle cx='12' cy='11' r='4' fill='%23fff' fill-opacity='.55'/%3E%3C/svg%3E">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Gaegu:wght@400;700&family=Gowun+Dodum&display=swap">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <title>업무 보드</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23007aff'/%3E%3Ccircle cx='11' cy='11' r='4' fill='%23fff'/%3E%3Crect x='17' y='8' width='8' height='6' rx='3' fill='%23fff' fill-opacity='.7'/%3E%3Crect x='7' y='18' width='18' height='6' rx='3' fill='%23fff' fill-opacity='.7'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <link rel="stylesheet" href="css/board.css">
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
-  <div class="frame">
-    <div class="cork">
-      <header class="masthead">
-        <div class="banner">
-          <span class="pin pin-l" aria-hidden="true"></span>
-          <span class="pin pin-r" aria-hidden="true"></span>
-          <p class="kicker">TEAM MAGNET BOARD</p>
-          <h1>업무 대자보</h1>
-        </div>
-        <p class="stamp" id="stamp" aria-label="오늘 날짜"></p>
-        <div class="head-tools">
-          <p class="tally" id="tally" aria-live="polite"></p>
-          <button class="chalk-btn" id="sweep" type="button">완료 치우기</button>
-        </div>
-      </header>
-
-      <main class="board" id="board" aria-label="업무 보드">
-        <div class="lanes" id="lanes"></div>
-        <section class="common" id="common" aria-labelledby="common-title"></section>
-      </main>
-
-      <p class="howto">자석(메모 왼쪽 끝 동그라미)을 잡아 이름 칸이나 공통 업무로 끌어 붙이세요 · 키보드는 자석에 초점을 두고 방향키 · 이 브라우저에 자동 저장</p>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <p class="app-name"><span class="app-mark" aria-hidden="true"></span>업무 보드</p>
+      <div class="head-tools">
+        <p class="tally" id="tally" aria-live="polite"></p>
+        <button class="pill" id="sweep" type="button">완료 치우기</button>
+      </div>
     </div>
-  </div>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow" id="stamp"></p>
+      <h1>누가, 무엇을.</h1>
+      <p class="lede">메모 왼쪽의 점을 잡아 이름으로 끌어 놓으세요. 함께 할 일은 아래 공통 업무에.</p>
+    </section>
+
+    <div class="board" id="board" aria-label="업무 보드">
+      <div class="lanes" id="lanes"></div>
+      <section class="common" id="common" aria-labelledby="common-title"></section>
+    </div>
+
+    <p class="howto">키보드: 점에 초점을 두고 ←/→ 로 다른 사람에게, ↑/↓ 로 순서 바꾸기 · 이 브라우저에 자동 저장</p>
+  </main>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

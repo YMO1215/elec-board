@@ -126,7 +126,7 @@ function dropZone(owner, layout) {
     zone.append(el);
   }
   if (!tasks.length && !(editing && editing.owner === owner)) {
-    zone.append(h("p", { class: "hint" }, owner === COMMON ? "모두가 함께 볼 일을 여기에 붙이세요" : "＋ 로 첫 업무를 붙여 보세요"));
+    zone.append(h("p", { class: "hint" }, owner === COMMON ? "함께 할 일을 여기로 끌어 놓으세요" : "+ 를 눌러 업무 추가"));
   }
   return zone;
 }
@@ -145,8 +145,10 @@ function nameEl(person) {
       document.querySelector(`.lane.${person.id} .name`)?.focus();
     };
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.isComposing) finish(true);
-      if (e.key === "Escape") finish(false);
+      // preventDefault: focus moves to the name button inside finish(), and the same
+      // Enter would otherwise "click" it and reopen the editor.
+      if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); finish(true); }
+      if (e.key === "Escape") { e.preventDefault(); finish(false); }
     });
     input.addEventListener("blur", () => finish(true));
     return input;
@@ -168,7 +170,7 @@ function render() {
   common.replaceChildren(
     h("header", { class: "common-head" },
       h("h2", { id: "common-title" }, "공통 업무"),
-      h("p", {}, "네 사람 모두의 일"),
+      h("p", {}, "모두의 일"),
       h("span", { class: "count" }, String(tasksOf(state, COMMON).length)),
       h("button", { class: "add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, "+")),
     dropZone(COMMON, "wrap"));
@@ -294,7 +296,7 @@ function beginDrag(e, id) {
       note.hidden = true;
       home.zone.insertBefore(placeholder, note);
     }
-    ghost.style.transform = `translate(${ev.clientX - offX}px, ${ev.clientY - offY}px) rotate(3deg) scale(1.04)`;
+    ghost.style.transform = `translate(${ev.clientX - offX}px, ${ev.clientY - offY}px) scale(1.03)`;
     place(ev.clientX, ev.clientY);
   };
 
@@ -336,7 +338,7 @@ function beginDrag(e, id) {
     if (reducedMotion()) { land(); return; }
     const r = placeholder.getBoundingClientRect();
     ghost.classList.add("is-snapping");
-    requestAnimationFrame(() => { ghost.style.transform = `translate(${r.left}px, ${r.top}px) rotate(0deg) scale(1)`; });
+    requestAnimationFrame(() => { ghost.style.transform = `translate(${r.left}px, ${r.top}px) scale(1)`; });
     let landed = false;
     const once = () => { if (!landed) { landed = true; land(); } };
     ghost.addEventListener("transitionend", once, { once: true });
@@ -356,7 +358,7 @@ function beginDrag(e, id) {
 function stamp() {
   const d = new Date();
   const el = document.getElementById("stamp");
-  el.replaceChildren(`${d.getMonth() + 1}.${d.getDate()}`, h("small", {}, `${WEEKDAYS[d.getDay()]}요일`));
+  el.textContent = `${d.getMonth() + 1}월 ${d.getDate()}일 ${WEEKDAYS[d.getDay()]}요일`;
 }
 
 document.getElementById("sweep").addEventListener("click", () => {

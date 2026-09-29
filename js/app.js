@@ -1,6 +1,8 @@
 // 업무 보드: render, magnet drag, inline editing, keyboard moves, undo, team sync.
+import { h } from "./dom.js";
+import { openCalendar } from "./calendar.js";
 import {
-  COMMON, MAX_TEXT, STORAGE_KEY, addTask, clearDone, load, moveTask, newId, owners, parse, removeTask, renamePerson,
+  COMMON, MAX_TEXT, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson,
   restoreTask, save, tasksOf, updateTask,
 } from "./store.js";
 import { POLL_MS, createSync } from "./sync.js";
@@ -29,6 +31,7 @@ let state = local; // what the screen shows
 let editing = null; // { owner, id|null }
 let renaming = null; // person id
 let dragging = false;
+let view = location.hash === "#done" ? "done" : "board";
 
 /** Optional board key: open the board once with `#k=<key>` and it is remembered. */
 function readKey() {
@@ -87,20 +90,10 @@ function showStatus({ mode, pending, detail }) {
 
 // ---------------------------------------------------------------- dom helpers
 
-function h(tag, attrs = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === null || v === undefined || v === false) continue;
-    if (k === "class") el.className = v;
-    else if (k.startsWith("on")) el.addEventListener(k.slice(2).toLowerCase(), v);
-    else if (k === "dataset") Object.assign(el.dataset, v);
-    else el.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const c of children.flat()) {
-    if (c === null || c === undefined || c === false) continue;
-    el.append(c instanceof Node ? c : document.createTextNode(String(c)));
-  }
-  return el;
+/** Local calendar date, YYYY-MM-DD. */
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function ownerName(owner) {
@@ -136,7 +129,10 @@ function noteEl(task) {
     text,
     h("div", { class: "note-tools" },
       h("button", { class: "tool", type: "button", "aria-pressed": String(task.done), "aria-label": task.done ? "완료 취소" : "완료 표시",
-        onClick: () => commit((s) => updateTask(s, task.id, { done: !task.done })) }, "✓"),
+        onClick: () => {
+          const doneAt = task.done ? null : todayIso(); // fixed here so a retried op keeps the same date
+          commit((s) => updateTask(s, task.id, { done: !task.done, doneAt }));
+        } }, "✓"),
       h("button", { class: "tool", type: "button", "aria-label": "삭제", onClick: () => remove(task) }, "✕")));
 }
 
@@ -209,8 +205,46 @@ function nameEl(person) {
     onClick: () => { renaming = person.id; render(); } }, h("span", {}, person.name));
 }
 
+function renderDone() {
+  const doneTasks = state.tasks.filter((t) => t.done);
+  const section = document.getElementById("done");
+  const cards = [...state.people.map((p) => ({ id: p.id, cls: p.id, name: p.name })), { id: COMMON, cls: "pc", name: "공통 업무" }]
+    .map((o) => {
+      // Most recently completed first; tasks finished before dates were recorded go last.
+      const rows = doneTasks.filter((t) => t.owner === o.id)
+        .sort((a, b) => (b.doneAt ?? "").localeCompare(a.doneAt ?? ""));
+      return h("article", { class: `done-card ${o.cls}`, "aria-label": `${o.name} 완료 목록` },
+        h("header", { class: "done-card-head" }, h("h3", {}, o.name), h("span", { class: "count" }, String(rows.length))),
+        rows.length ? h("ul", { class: "done-list" }, rows.map((t) => h("li", { class: "done-row" },
+          h("span", { class: "done-mark", "aria-hidden": "true" }, "✓"),
+          h("div", { class: "done-body" },
+            h("p", { class: "done-text" }, t.text),
+            h("p", { class: "done-date" }, t.doneAt ? `${Number(t.doneAt.slice(5, 7))}월 ${Number(t.doneAt.slice(8))}일 완료` : "완료")),
+          h("div", { class: "done-actions" },
+            h("button", { class: "text-btn", type: "button", "aria-label": `“${t.text}” 진행 중으로 되돌리기`,
+              onClick: () => commit((s) => updateTask(s, t.id, { done: false, doneAt: null })) }, "되돌리기"),
+            h("button", { class: "tool", type: "button", "aria-label": `“${t.text}” 삭제`, onClick: () => remove(t) }, "✕")))))
+          : h("p", { class: "done-empty" }, "완료한 일이 없어요"));
+    });
+  section.replaceChildren(
+    h("header", { class: "done-head" }, h("h2", { id: "done-title" }, "완료한 일"), h("p", {}, `전체 ${doneTasks.length}건`)),
+    ...cards);
+}
+
 function render() {
   if (!busy()) state = sync.mode === "shared" ? sync.view() : local;
+  const total = state.tasks.length;
+  const done = state.tasks.filter((t) => t.done).length;
+  document.getElementById("tally").textContent = total ? `전체 ${total} · 완료 ${done}` : "아직 붙인 업무 없음";
+  const doneBtn = document.getElementById("doneBtn");
+  doneBtn.textContent = view === "done" ? "보드로" : done ? `완료 보기 (${done})` : "완료 보기";
+  doneBtn.setAttribute("aria-pressed", String(view === "done"));
+  document.getElementById("board").hidden = view === "done";
+  document.getElementById("done").hidden = view !== "done";
+  if (view === "done") {
+    renderDone();
+    return;
+  }
   const lanes = document.getElementById("lanes");
   lanes.replaceChildren(...state.people.map((p) => h("section", { class: `lane ${p.id}`, "aria-label": `${p.name}의 칸` },
     h("header", { class: "lane-head" },
@@ -227,13 +261,6 @@ function render() {
       h("span", { class: "count" }, String(tasksOf(state, COMMON).length)),
       h("button", { class: "add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, "+")),
     dropZone(COMMON, "wrap"));
-
-  const total = state.tasks.length;
-  const done = state.tasks.filter((t) => t.done).length;
-  document.getElementById("tally").textContent = total ? `전체 ${total} · 완료 ${done}` : "아직 붙인 업무 없음";
-  const sweep = document.getElementById("sweep");
-  sweep.disabled = done === 0;
-  sweep.textContent = done ? `완료 치우기 (${done})` : "완료 치우기";
 
   // Focus synchronously: keystrokes typed right after tapping + must not be lost.
   const area = document.querySelector(".editor");
@@ -413,18 +440,23 @@ function beginDrag(e, id) {
 
 function stamp() {
   const d = new Date();
-  const el = document.getElementById("stamp");
-  el.textContent = `${d.getMonth() + 1}월 ${d.getDate()}일 ${WEEKDAYS[d.getDay()]}요일`;
+  document.getElementById("stamp").textContent = `${d.getMonth() + 1}월 ${d.getDate()}일 ${WEEKDAYS[d.getDay()]}요일`;
 }
 
-document.getElementById("sweep").addEventListener("click", () => {
-  const swept = state.tasks.map((task, index) => ({ task, index })).filter((r) => r.task.done);
-  commit((s) => clearDone(s));
-  toast(`완료 ${swept.length}건을 치웠어요`, {
-    label: "되돌리기",
-    run: () => commit((s) => swept.reduce((acc, r) => restoreTask(acc, r), s)),
-  });
-});
+document.getElementById("stamp").addEventListener("click", () => openCalendar({ people: state.people, today: todayIso() }));
+
+// Board <-> completed list. The list has its own history entry (#done) so Back returns to the board.
+function setView(next, { push = true } = {}) {
+  if (next === view) return;
+  view = next;
+  editing = null;
+  renaming = null;
+  if (push) history.pushState(null, "", next === "done" ? "#done" : location.pathname + location.search);
+  render();
+  window.scrollTo(0, 0);
+}
+document.getElementById("doneBtn").addEventListener("click", () => setView(view === "done" ? "board" : "done"));
+window.addEventListener("popstate", () => setView(location.hash === "#done" ? "done" : "board", { push: false }));
 
 // Local-only mode: another tab of this browser changed the board.
 window.addEventListener("storage", (e) => {

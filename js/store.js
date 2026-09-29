@@ -101,7 +101,10 @@ export function parse(raw) {
     const valid = new Set([...people.map((p) => p.id), COMMON]);
     const tasks = data.tasks
       .filter((t) => t && typeof t.id === "string" && valid.has(t.owner) && cleanText(t.text))
-      .map((t) => ({ id: t.id, text: cleanText(t.text), owner: t.owner, done: Boolean(t.done) }));
+      .map((t) => ({
+        id: t.id, text: cleanText(t.text), owner: t.owner, done: Boolean(t.done),
+        doneAt: t.done && /^\d{4}-\d{2}-\d{2}$/.test(t.doneAt) ? t.doneAt : null,
+      }));
     return { version: 1, people, tasks };
   } catch {
     return initialState();

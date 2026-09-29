@@ -24,6 +24,11 @@ export function tasksOf(state, owner) {
   return state.tasks.filter((t) => t.owner === owner);
 }
 
+/** What the board shows: completed tasks leave the board and live in the completed list. */
+export function activeOf(state, owner) {
+  return state.tasks.filter((t) => t.owner === owner && !t.done);
+}
+
 export function newId() {
   return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -43,12 +48,12 @@ export function addTask(state, owner, text, id = newId()) {
   return { ...state, tasks };
 }
 
-/** Move a task to `owner` at position `index` within that lane. */
+/** Move a task to `owner` at position `index` among that lane's visible (not completed) tasks. */
 export function moveTask(state, id, owner, index) {
   const task = state.tasks.find((t) => t.id === id);
   if (!task || !owners(state).includes(owner)) return state;
   const rest = state.tasks.filter((t) => t.id !== id);
-  const lane = rest.filter((t) => t.owner === owner);
+  const lane = rest.filter((t) => t.owner === owner && !t.done);
   const at = Math.max(0, Math.min(index, lane.length));
   let globalIdx;
   if (lane.length === 0) globalIdx = rest.length;

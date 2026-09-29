@@ -429,13 +429,10 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 }
 .tool::after { content: ""; position: absolute; inset: -8px; }
 .tool:hover { background: var(--surface); color: var(--text); }
-.tool[aria-pressed="true"] { background: var(--c); color: #fff; }
 @media (hover: hover) {
   .note .tool:not([aria-pressed="true"]) { opacity: 0; }
   .note:hover .tool, .note:focus-within .tool { opacity: 1; }
 }
-.note.is-done { opacity: 0.55; }
-.note.is-done .note-text { text-decoration: line-through; text-decoration-color: var(--text-3); color: var(--text-2); }
 
 /* dragging */
 .note.is-ghost {

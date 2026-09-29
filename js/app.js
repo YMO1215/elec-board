@@ -3,7 +3,7 @@ import { h } from "./dom.js";
 import { openCalendar } from "./calendar.js";
 import {
   COMMON, MAX_TEXT, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson,
-  restoreTask, save, setNote, tasksOf, updateTask,
+  activeOf, restoreTask, save, setNote, updateTask,
 } from "./store.js";
 import { POLL_MS, createSync } from "./sync.js";
 
@@ -136,18 +136,23 @@ function noteEl(task) {
   magnet.addEventListener("pointerdown", (e) => beginDrag(e, task.id));
   magnet.addEventListener("keydown", (e) => keyMove(e, task));
   const extra = task.owner === COMMON ? personLines(task) : null; // common tasks: one input line per person
-  return h("article", { class: `note ${cls}${task.done ? " is-done" : ""}`, dataset: { id: task.id } },
+  return h("article", { class: `note ${cls}`, dataset: { id: task.id } },
     magnet,
     text,
     h("div", { class: "note-tools" },
-      h("button", { class: "tool", type: "button", "aria-pressed": String(task.done), "aria-label": task.done ? "완료 취소" : "완료 표시",
-        onClick: () => {
-          const doneAt = task.done ? null : todayIso(); // fixed here so a retried op keeps the same date
-          commit((s) => updateTask(s, task.id, { done: !task.done, doneAt }));
-        } }, "✓"),
+      h("button", { class: "tool", type: "button", "aria-label": `“${task.text}” 완료`, onClick: () => complete(task) }, "✓"),
       h("button", { class: "tool", type: "button", "aria-label": "삭제", onClick: () => remove(task) }, "✕"),
       extra?.button),
     extra?.panel);
+}
+
+/** ✓ : the card leaves the board at once and shows up in the completed list. */
+function complete(task) {
+  const doneAt = todayIso(); // fixed here so a retried op keeps the same date
+  commit((s) => updateTask(s, task.id, { done: true, doneAt }));
+  toast(`“${task.text.slice(0, 18)}” 완료 — 완료 보기에서 볼 수 있어요`, {
+    label: "되돌리기", run: () => commit((s) => updateTask(s, task.id, { done: false, doneAt: null })),
+  });
 }
 
 // ---------------------------------------------------------------- per-person lines on common tasks
@@ -236,7 +241,7 @@ function editorEl(owner, task) {
 }
 
 function dropZone(owner, layout) {
-  const tasks = tasksOf(state, owner);
+  const tasks = activeOf(state, owner);
   const zone = h("div", { class: "drop", dataset: { owner, layout }, role: "list", "aria-label": `${ownerName(owner)} 업무` });
   if (editing && editing.owner === owner && !editing.id) zone.append(editorEl(owner, null));
   for (const t of tasks) {
@@ -307,7 +312,7 @@ function render() {
   if (!busy()) state = sync.mode === "shared" ? sync.view() : local;
   const total = state.tasks.length;
   const done = state.tasks.filter((t) => t.done).length;
-  document.getElementById("tally").textContent = total ? `전체 ${total} · 완료 ${done}` : "아직 붙인 업무 없음";
+  document.getElementById("tally").textContent = total ? `진행 ${total - done} · 완료 ${done}` : "아직 붙인 업무 없음";
   const doneBtn = document.getElementById("doneBtn");
   doneBtn.textContent = view === "done" ? "보드로" : done ? `완료 보기 (${done})` : "완료 보기";
   doneBtn.setAttribute("aria-pressed", String(view === "done"));
@@ -321,7 +326,7 @@ function render() {
   lanes.replaceChildren(...state.people.map((p) => h("section", { class: `lane ${p.id}`, "aria-label": `${p.name}의 칸` },
     h("header", { class: "lane-head" },
       nameEl(p),
-      h("span", { class: "count", "aria-label": `${tasksOf(state, p.id).length}건` }, String(tasksOf(state, p.id).length)),
+      h("span", { class: "count", "aria-label": `${activeOf(state, p.id).length}건` }, String(activeOf(state, p.id).length)),
       h("button", { class: "add", type: "button", "aria-label": `${p.name}에게 업무 추가`, onClick: () => startEdit(p.id, null) }, "+")),
     dropZone(p.id, "stack"))));
 
@@ -329,7 +334,7 @@ function render() {
     h("header", { class: "common-head" },
       h("h2", { id: "common-title" }, "공통 업무"),
       h("p", {}, "모두의 일"),
-      h("span", { class: "count" }, String(tasksOf(state, COMMON).length)),
+      h("span", { class: "count" }, String(activeOf(state, COMMON).length)),
       h("button", { class: "add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, "+")));
   document.getElementById("common-drop").replaceChildren(dropZone(COMMON, "wrap"));
 
@@ -362,7 +367,7 @@ function remove(task) {
 
 function keyMove(e, task) {
   const order = owners(state);
-  const lane = tasksOf(state, task.owner);
+  const lane = activeOf(state, task.owner);
   const idx = lane.findIndex((t) => t.id === task.id);
   let target = null;
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {

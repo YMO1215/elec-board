@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { monthGrid, shiftOn } from "../js/shift.js";
-import { addTask, initialState, moveTask, parse, setNote, updateTask } from "../js/store.js";
+import { activeOf, addTask, initialState, moveTask, parse, setNote, tasksOf, updateTask } from "../js/store.js";
 
 const row = (iso) => ["p1", "p2", "p3", "p4"].map((p) => shiftOn(p, iso));
 
@@ -60,6 +60,22 @@ test("per-person note lines: set, clear, sanitise, survive a move", () => {
   const dirty = { ...s, tasks: [{ ...s.tasks[0], notes: { p1: "ok", p9: "ghost", p2: 5, p3: "  " } }] };
   assert.deepEqual(parse(JSON.stringify(dirty)).tasks[0].notes, { p1: "ok" });
   assert.deepEqual(parse(JSON.stringify({ ...s, tasks: [{ ...s.tasks[0], notes: "junk" }] })).tasks[0].notes, {});
+});
+
+test("completed tasks leave the board; positions count only visible tasks", () => {
+  let s = initialState();
+  for (const id of ["a", "b", "c"]) s = addTask(s, "p1", id, id); // lane order: c, b, a
+  s = addTask(s, "p2", "x", "x");
+  s = updateTask(s, "b", { done: true, doneAt: "2026-10-02" });
+  assert.deepEqual(activeOf(s, "p1").map((t) => t.id), ["c", "a"]);
+  assert.deepEqual(tasksOf(s, "p1").map((t) => t.id), ["c", "b", "a"]); // still stored
+  // index 1 among the visible tasks = after "c", before "a" — the hidden done task does not shift it
+  const moved = moveTask(s, "x", "p1", 1);
+  assert.deepEqual(activeOf(moved, "p1").map((t) => t.id), ["c", "x", "a"]);
+  assert.deepEqual(moveTask(s, "x", "p1", 99).tasks.filter((t) => t.owner === "p1" && !t.done).map((t) => t.id), ["c", "a", "x"]);
+  // an emptied-by-completion lane accepts a card
+  const emptied = updateTask(updateTask(s, "c", { done: true }), "a", { done: true });
+  assert.deepEqual(activeOf(moveTask(emptied, "x", "p1", 0), "p1").map((t) => t.id), ["x"]);
 });
 
 test("completion date is kept through storage", () => {

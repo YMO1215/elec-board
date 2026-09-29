@@ -205,6 +205,65 @@ function nameEl(person) {
     onClick: () => { renaming = person.id; render(); } }, h("span", {}, person.name));
 }
 
+// ---------------------------------------------------------------- quick entry (common card)
+
+const PERSON_EMOJI = { p1: "🦊", p2: "🐳", p3: "🐸", p4: "🦁" };
+let quickOpen = false;
+const quickInput = document.getElementById("quickInput");
+const quickPeople = document.getElementById("quickPeople");
+
+/** Add typed text to `owner`. Empty input just moves focus there. */
+function quickAdd(owner) {
+  const text = quickInput.value.trim();
+  if (!text) {
+    quickInput.focus();
+    return;
+  }
+  const id = newId(); // fixed outside the op so a retried op keeps the same id
+  commit((s) => addTask(s, owner, text, id));
+  quickInput.value = "";
+  quickInput.focus();
+  toast(owner === COMMON ? "공통 업무에 붙였어요" : `${ownerName(owner)}에게 붙였어요`);
+}
+
+for (const p of state.people) {
+  quickPeople.append(h("button", {
+    class: `quick-person ${p.id}`, type: "button", dataset: { id: p.id },
+    onClick: () => quickAdd(p.id),
+  }, h("span", { class: "quick-emoji", "aria-hidden": "true" }, PERSON_EMOJI[p.id]), h("span", { class: "quick-name" }, p.name)));
+}
+
+/** Names can change (rename / other people's edits): update text only, never rebuild the panel. */
+function syncQuickNames() {
+  for (const p of state.people) {
+    const btn = quickPeople.querySelector(`[data-id="${p.id}"]`);
+    if (!btn) continue;
+    btn.querySelector(".quick-name").textContent = p.name;
+    btn.setAttribute("aria-label", `${p.name}에게 붙이기`);
+  }
+}
+
+function toggleQuick() {
+  quickOpen = !quickOpen;
+  document.getElementById("quick").hidden = !quickOpen;
+  const btn = document.querySelector(".expand");
+  btn.setAttribute("aria-expanded", String(quickOpen));
+  btn.firstElementChild.textContent = quickOpen ? "접기" : "펼치기";
+  if (quickOpen) quickInput.focus();
+}
+
+quickInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.isComposing) {
+    e.preventDefault();
+    quickAdd(COMMON);
+  }
+  if (e.key === "Escape") {
+    e.preventDefault();
+    toggleQuick();
+    document.querySelector(".expand")?.focus();
+  }
+});
+
 function renderDone() {
   const doneTasks = state.tasks.filter((t) => t.done);
   const section = document.getElementById("done");
@@ -253,14 +312,16 @@ function render() {
       h("button", { class: "add", type: "button", "aria-label": `${p.name}에게 업무 추가`, onClick: () => startEdit(p.id, null) }, "+")),
     dropZone(p.id, "stack"))));
 
-  const common = document.getElementById("common");
-  common.replaceChildren(
+  document.getElementById("common-head").replaceChildren(
     h("header", { class: "common-head" },
       h("h2", { id: "common-title" }, "공통 업무"),
       h("p", {}, "모두의 일"),
       h("span", { class: "count" }, String(tasksOf(state, COMMON).length)),
-      h("button", { class: "add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, "+")),
-    dropZone(COMMON, "wrap"));
+      h("button", { class: "add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, "+"),
+      h("button", { class: "expand", type: "button", "aria-expanded": String(quickOpen), "aria-controls": "quick", onClick: toggleQuick },
+        h("span", {}, quickOpen ? "접기" : "펼치기"))));
+  document.getElementById("common-drop").replaceChildren(dropZone(COMMON, "wrap"));
+  syncQuickNames();
 
   // Focus synchronously: keystrokes typed right after tapping + must not be lost.
   const area = document.querySelector(".editor");

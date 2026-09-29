@@ -17,6 +17,7 @@
     <div class="topbar-inner">
       <p class="app-name"><span class="app-mark" aria-hidden="true"></span>업무 보드</p>
       <div class="head-tools">
+        <p class="sync" id="sync" role="status" data-tone="wait">연결 중…</p>
         <p class="tally" id="tally" aria-live="polite"></p>
         <button class="pill" id="sweep" type="button">완료 치우기</button>
       </div>
@@ -26,16 +27,12 @@
   <main class="page">
     <section class="hero">
       <p class="eyebrow" id="stamp"></p>
-      <h1>누가, 무엇을.</h1>
-      <p class="lede">메모 왼쪽의 점을 잡아 이름으로 끌어 놓으세요. 함께 할 일은 아래 공통 업무에.</p>
     </section>
 
     <div class="board" id="board" aria-label="업무 보드">
       <div class="lanes" id="lanes"></div>
       <section class="common" id="common" aria-labelledby="common-title"></section>
     </div>
-
-    <p class="howto">키보드: 점에 초점을 두고 ←/→ 로 다른 사람에게, ↑/↓ 로 순서 바꾸기 · 이 브라우저에 자동 저장</p>
   </main>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </body>

@@ -1,8 +1,9 @@
-// 업무 대자보: render, magnet drag, inline editing, keyboard moves, undo.
+// 업무 보드: render, magnet drag, inline editing, keyboard moves, undo, team sync.
 import {
-  COMMON, MAX_TEXT, STORAGE_KEY, addTask, clearDone, load, moveTask, owners, parse, removeTask, renamePerson,
+  COMMON, MAX_TEXT, STORAGE_KEY, addTask, clearDone, load, moveTask, newId, owners, parse, removeTask, renamePerson,
   restoreTask, save, tasksOf, updateTask,
 } from "./store.js";
+import { POLL_MS, createSync } from "./sync.js";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const DRAG_THRESHOLD = 3;
@@ -21,17 +22,67 @@ try {
   queueMicrotask(() => toast("이 브라우저는 저장을 막고 있어요. 창을 닫으면 내용이 사라집니다."));
 }
 
-let state = load(storage);
+const KEY_STORAGE = "magnet-board:key";
+
+let local = load(storage); // this browser's copy; in shared mode it is the fast first-paint cache
+let state = local; // what the screen shows
 let editing = null; // { owner, id|null }
 let renaming = null; // person id
 let dragging = false;
 
-function commit(next, { focusMagnet = null } = {}) {
-  if (next === state) return;
-  state = next;
-  save(storage, state);
-  render();
+/** Optional board key: open the board once with `#k=<key>` and it is remembered. */
+function readKey() {
+  const m = location.hash.match(/(?:^#|&)k=([^&]+)/);
+  if (m) {
+    storage.setItem(KEY_STORAGE, decodeURIComponent(m[1]));
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  return storage.getItem(KEY_STORAGE);
+}
+
+const sync = createSync({ key: readKey(), onChange: () => refresh(), onStatus: showStatus });
+
+function busy() {
+  return Boolean(dragging || editing || renaming);
+}
+
+function refresh() {
+  if (sync.mode === "shared") {
+    state = sync.view();
+    save(storage, state);
+  } else {
+    state = local;
+  }
+  if (!busy()) render(); // mid-drag / mid-typing: render when the user is done
+}
+
+/** Every change is an operation (state -> state), so it can be re-applied after a conflict. */
+function commit(op, { focusMagnet = null } = {}) {
+  if (sync.mode === "shared") {
+    sync.commit(op);
+  } else {
+    const next = op(local);
+    if (next === local) return;
+    local = next;
+    save(storage, local);
+    refresh();
+  }
   if (focusMagnet) document.querySelector(`.note[data-id="${focusMagnet}"] .magnet`)?.focus();
+}
+
+function showStatus({ mode, pending, detail }) {
+  const el = document.getElementById("sync");
+  let text;
+  let tone;
+  if (mode === "connecting") [text, tone] = ["연결 중…", "wait"];
+  else if (mode === "shared" && detail === "offline") [text, tone] = [`오프라인 · 저장 대기 ${pending}`, "warn"];
+  else if (mode === "shared" && detail) [text, tone] = [`저장 실패 — ${detail}`, "warn"];
+  else if (mode === "shared") [text, tone] = [pending ? "저장 중…" : "팀과 공유 중", "live"];
+  else if (mode === "error") [text, tone] = ["보드 키가 맞지 않아요 — 팀에서 받은 링크로 여세요", "warn"];
+  else if (detail === "not_configured") [text, tone] = ["이 기기에만 저장 (공유 저장소 미연결)", "off"];
+  else [text, tone] = ["오프라인 · 이 기기에만 저장", "warn"];
+  el.textContent = text;
+  el.dataset.tone = tone;
 }
 
 // ---------------------------------------------------------------- dom helpers
@@ -85,7 +136,7 @@ function noteEl(task) {
     text,
     h("div", { class: "note-tools" },
       h("button", { class: "tool", type: "button", "aria-pressed": String(task.done), "aria-label": task.done ? "완료 취소" : "완료 표시",
-        onClick: () => commit(updateTask(state, task.id, { done: !task.done })) }, "✓"),
+        onClick: () => commit((s) => updateTask(s, task.id, { done: !task.done })) }, "✓"),
       h("button", { class: "tool", type: "button", "aria-label": "삭제", onClick: () => remove(task) }, "✕")));
 }
 
@@ -101,7 +152,8 @@ function editorEl(owner, task) {
     editing = null;
     const value = area.value.trim();
     if (keep && value) {
-      commit(task ? updateTask(state, task.id, { text: value }) : addTask(state, owner, value));
+      const id = newId(); // fixed outside the op so a retried op keeps the same id
+      commit(task ? (s) => updateTask(s, task.id, { text: value }) : (s) => addTask(s, owner, value, id));
     } else {
       render();
     }
@@ -139,8 +191,8 @@ function nameEl(person) {
       if (done) return;
       done = true;
       renaming = null;
-      const next = keep ? renamePerson(state, person.id, input.value) : state;
-      if (next !== state) commit(next);
+      const name = input.value.trim();
+      if (keep && name && name !== person.name) commit((s) => renamePerson(s, person.id, name));
       else render();
       document.querySelector(`.lane.${person.id} .name`)?.focus();
     };
@@ -158,6 +210,7 @@ function nameEl(person) {
 }
 
 function render() {
+  if (!busy()) state = sync.mode === "shared" ? sync.view() : local;
   const lanes = document.getElementById("lanes");
   lanes.replaceChildren(...state.people.map((p) => h("section", { class: `lane ${p.id}`, "aria-label": `${p.name}의 칸` },
     h("header", { class: "lane-head" },
@@ -201,9 +254,10 @@ function startEdit(owner, id) {
 }
 
 function remove(task) {
-  const { state: next, removed } = removeTask(state, task.id);
-  commit(next);
-  toast(`“${task.text.slice(0, 18)}” 뗐어요`, { label: "되돌리기", run: () => commit(restoreTask(state, removed)) });
+  const { removed } = removeTask(state, task.id);
+  if (!removed) return;
+  commit((s) => removeTask(s, task.id).state);
+  toast(`“${task.text.slice(0, 18)}” 뗐어요`, { label: "되돌리기", run: () => commit((s) => restoreTask(s, removed)) });
 }
 
 // ---------------------------------------------------------------- keyboard moves
@@ -212,19 +266,19 @@ function keyMove(e, task) {
   const order = owners(state);
   const lane = tasksOf(state, task.owner);
   const idx = lane.findIndex((t) => t.id === task.id);
-  let next = null;
+  let target = null;
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
     const o = order[(order.indexOf(task.owner) + (e.key === "ArrowRight" ? 1 : order.length - 1)) % order.length];
-    next = moveTask(state, task.id, o, 0);
+    target = [o, 0];
     announce(`${ownerName(o)}에 붙였어요`);
   } else if (e.key === "ArrowUp" && idx > 0) {
-    next = moveTask(state, task.id, task.owner, idx - 1);
+    target = [task.owner, idx - 1];
   } else if (e.key === "ArrowDown" && idx < lane.length - 1) {
-    next = moveTask(state, task.id, task.owner, idx + 1);
+    target = [task.owner, idx + 1];
   }
-  if (next) {
+  if (target) {
     e.preventDefault();
-    commit(next, { focusMagnet: task.id });
+    commit((s) => moveTask(s, task.id, target[0], target[1]), { focusMagnet: task.id });
   }
 }
 
@@ -330,10 +384,12 @@ function beginDrag(e, id) {
         const moved = moveTask(state, id, owner, index);
         const changed = JSON.stringify(moved.tasks) !== JSON.stringify(state.tasks);
         if (changed) {
-          commit(moved);
+          commit((s) => moveTask(s, id, owner, index));
           navigator.vibrate?.(12);
+          return;
         }
       }
+      render(); // catch up on changes that arrived during the drag
     };
     if (reducedMotion()) { land(); return; }
     const r = placeholder.getBoundingClientRect();
@@ -362,18 +418,31 @@ function stamp() {
 }
 
 document.getElementById("sweep").addEventListener("click", () => {
-  const before = state;
-  const n = state.tasks.filter((t) => t.done).length;
-  commit(clearDone(state));
-  toast(`완료 ${n}건을 치웠어요`, { label: "되돌리기", run: () => commit(before) });
+  const swept = state.tasks.map((task, index) => ({ task, index })).filter((r) => r.task.done);
+  commit((s) => clearDone(s));
+  toast(`완료 ${swept.length}건을 치웠어요`, {
+    label: "되돌리기",
+    run: () => commit((s) => swept.reduce((acc, r) => restoreTask(acc, r), s)),
+  });
 });
 
-// Another tab changed the board: follow it (unless the user is mid-action here).
+// Local-only mode: another tab of this browser changed the board.
 window.addEventListener("storage", (e) => {
-  if (e.key !== STORAGE_KEY || dragging || editing || renaming) return;
-  state = e.newValue ? parse(e.newValue) : load(storage);
-  render();
+  if (e.key !== STORAGE_KEY || sync.mode === "shared" || busy()) return;
+  local = e.newValue ? parse(e.newValue) : load(storage);
+  refresh();
 });
+
+async function connect() {
+  showStatus({ mode: "connecting", pending: 0 });
+  const shared = await sync.start(local);
+  if (!shared) return;
+  setInterval(() => { if (!document.hidden && !busy()) sync.poll(); }, POLL_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) sync.poll(); });
+  window.addEventListener("online", () => { sync.flush(); sync.poll(); });
+  window.addEventListener("focus", () => sync.poll());
+}
 
 stamp();
 render();
+connect();

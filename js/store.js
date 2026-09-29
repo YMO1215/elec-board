@@ -24,7 +24,7 @@ export function tasksOf(state, owner) {
   return state.tasks.filter((t) => t.owner === owner);
 }
 
-function newId() {
+export function newId() {
   return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
 

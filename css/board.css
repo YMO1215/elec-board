@@ -124,6 +124,27 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 }
 .head-tools { display: flex; align-items: center; gap: 14px; }
 .tally { margin: 0; font-size: 14px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.sync {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.sync::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.sync[data-tone="live"]::before { background: var(--c3); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c3) 22%, transparent); }
+.sync[data-tone="warn"] { color: var(--c4); }
+.sync[data-tone="warn"]::before { background: var(--c4); }
+.sync[data-tone="wait"]::before { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
 .pill {
   min-height: 34px;
   padding: 0 16px;
@@ -146,8 +167,8 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
   margin: 0 auto;
   padding: clamp(28px, 6vw, 64px) clamp(16px, 4vw, 40px) calc(48px + env(safe-area-inset-bottom));
 }
-.hero { margin-bottom: clamp(24px, 4vw, 44px); }
-.eyebrow { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--c4); }
+.hero { margin-bottom: clamp(14px, 2vw, 22px); }
+.eyebrow { margin: 0; font-size: 15px; font-weight: 600; color: var(--c4); }
 .hero h1 {
   margin: 0;
   font-family: var(--font-display);
@@ -157,7 +178,6 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
   letter-spacing: -0.035em;
 }
 .lede { margin: 12px 0 0; max-width: 34em; font-size: clamp(17px, 1.8vw, 21px); line-height: 1.4; color: var(--text-2); }
-.howto { margin: 32px 0 0; font-size: 13px; color: var(--text-3); text-align: center; }
 
 /* ---------------------------------------------------------------- lanes */
 
@@ -508,6 +528,9 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 }
 @media (max-width: 520px) {
   .tally { display: none; }
+  .app-name { font-size: 15px; }
+  .sync { font-size: 12px; white-space: normal; max-width: 150px; line-height: 1.25; }
+  .pill { padding: 0 12px; font-size: 13px; }
   .lane { padding: 14px 10px 10px; border-radius: 18px; }
   .lane .count { display: none; }
   .lane-head { gap: 6px; }

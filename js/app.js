@@ -658,8 +658,9 @@ function setView(next, { push = true } = {}) {
   render();
   window.scrollTo(0, 0);
 }
-document.getElementById("segBoard").addEventListener("click", () => setView("board"));
-document.getElementById("segDone").addEventListener("click", () => setView("done"));
+// Tapping the segment that is already selected flips to the other one.
+document.getElementById("segBoard").addEventListener("click", () => setView(view === "board" ? "done" : "board"));
+document.getElementById("segDone").addEventListener("click", () => setView(view === "done" ? "board" : "done"));
 window.addEventListener("popstate", () => setView(location.hash === "#done" ? "done" : "board", { push: false }));
 
 // Local-only mode: another tab of this browser changed the board.

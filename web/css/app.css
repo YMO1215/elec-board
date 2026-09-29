@@ -722,6 +722,7 @@ details.inline[open] > summary { margin-bottom: var(--sp-2); }
   body.printing-label > *:not(dialog) { display: none; }
 }
 
-/* Last on purpose: same specificity as component classes, so it must come after
-   them for the hidden attribute to win (no !important). */
-[hidden] { display: none; }
+/* Safety net (same convention as the other apps): component display rules such as
+   .btn{display:inline-flex} or `details.fold > .fold-body` otherwise beat the UA
+   [hidden] rule. The one intended !important in this file. */
+[hidden] { display: none !important; }

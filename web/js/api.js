@@ -53,7 +53,16 @@ export async function request(path, { method = "GET", body, form, params, signal
     throw new ApiError(0, "offline", "서버에 연결할 수 없습니다. 네트워크를 확인하세요.");
   }
   const type = res.headers.get("content-type") || "";
-  const data = type.includes("application/json") ? await res.json().catch(() => null) : null;
+  let data = null;
+  if (type.includes("application/json")) {
+    try {
+      data = await res.json();
+    } catch (err) {
+      // Navigating away aborts the body read: that must stay an abort, not become `null` data.
+      if (err.name === "AbortError" || signal?.aborted) throw new DOMException("aborted", "AbortError");
+      if (res.ok) throw new ApiError(res.status, "bad_response", "서버 응답을 읽지 못했습니다. 다시 시도하세요.");
+    }
+  }
   if (!res.ok) {
     const e = (data && data.error) || {};
     const err = new ApiError(res.status, e.code || `http_${res.status}`, e.message || `요청이 실패했습니다 (${res.status}).`, e.detail);

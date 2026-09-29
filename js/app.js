@@ -3,7 +3,7 @@ import { h } from "./dom.js";
 import { openCalendar } from "./calendar.js";
 import {
   COMMON, MAX_TEXT, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson,
-  restoreTask, save, tasksOf, updateTask,
+  restoreTask, save, setNote, tasksOf, updateTask,
 } from "./store.js";
 import { POLL_MS, createSync } from "./sync.js";
 
@@ -45,8 +45,12 @@ function readKey() {
 
 const sync = createSync({ key: readKey(), onChange: () => refresh(), onStatus: showStatus });
 
+const typingInNote = () => document.activeElement?.classList?.contains("note-line-input") ?? false;
+let quiet = false; // a change whose result is already on screen (the user just typed it): don't redraw
+let pendingRender = false; // a redraw was skipped while the user was busy
+
 function busy() {
-  return Boolean(dragging || editing || renaming);
+  return Boolean(dragging || editing || renaming || typingInNote());
 }
 
 function refresh() {
@@ -56,19 +60,26 @@ function refresh() {
   } else {
     state = local;
   }
-  if (!busy()) render(); // mid-drag / mid-typing: render when the user is done
+  if (quiet) return;
+  if (busy()) pendingRender = true; // mid-drag / mid-typing: render when the user is done
+  else render();
 }
 
 /** Every change is an operation (state -> state), so it can be re-applied after a conflict. */
-function commit(op, { focusMagnet = null } = {}) {
-  if (sync.mode === "shared") {
-    sync.commit(op);
-  } else {
-    const next = op(local);
-    if (next === local) return;
-    local = next;
-    save(storage, local);
-    refresh();
+function commit(op, { focusMagnet = null, silent = false } = {}) {
+  quiet = silent;
+  try {
+    if (sync.mode === "shared") {
+      sync.commit(op);
+    } else {
+      const next = op(local);
+      if (next === local) return;
+      local = next;
+      save(storage, local);
+      refresh();
+    }
+  } finally {
+    quiet = false;
   }
   if (focusMagnet) document.querySelector(`.note[data-id="${focusMagnet}"] .magnet`)?.focus();
 }
@@ -124,6 +135,7 @@ function noteEl(task) {
   });
   magnet.addEventListener("pointerdown", (e) => beginDrag(e, task.id));
   magnet.addEventListener("keydown", (e) => keyMove(e, task));
+  const extra = task.owner === COMMON ? personLines(task) : null; // common tasks: one input line per person
   return h("article", { class: `note ${cls}${task.done ? " is-done" : ""}`, dataset: { id: task.id } },
     magnet,
     text,
@@ -133,8 +145,67 @@ function noteEl(task) {
           const doneAt = task.done ? null : todayIso(); // fixed here so a retried op keeps the same date
           commit((s) => updateTask(s, task.id, { done: !task.done, doneAt }));
         } }, "✓"),
-      h("button", { class: "tool", type: "button", "aria-label": "삭제", onClick: () => remove(task) }, "✕")));
+      h("button", { class: "tool", type: "button", "aria-label": "삭제", onClick: () => remove(task) }, "✕"),
+      extra?.button),
+    extra?.panel);
 }
+
+// ---------------------------------------------------------------- per-person lines on common tasks
+
+const openLines = new Set(); // task ids whose lines are open; survives re-renders
+
+function personLines(task) {
+  const panelId = `lines-${task.id}`;
+  const noteOf = (personId) => state.tasks.find((t) => t.id === task.id)?.notes?.[personId] ?? "";
+  const dots = h("span", { class: "mini-dots", "aria-hidden": "true" });
+  const paintDots = () => dots.replaceChildren(...state.people.filter((p) => noteOf(p.id)).map((p) => h("i", { class: p.id })));
+  paintDots();
+
+  const panel = h("div", { class: "note-lines", id: panelId, role: "group", "aria-label": "담당자별 입력" },
+    state.people.map((p) => {
+      const input = h("input", {
+        class: "note-line-input", type: "text", maxlength: String(MAX_TEXT), autocomplete: "off", enterkeyhint: "done",
+        value: noteOf(p.id), placeholder: p.name, "aria-label": `${p.name} 입력`,
+      });
+      let timer = null;
+      const save = () => {
+        clearTimeout(timer);
+        const value = input.value.trim();
+        if (value === noteOf(p.id)) return;
+        commit((s) => setNote(s, task.id, p.id, value), { silent: true }); // already on screen: no redraw
+        paintDots();
+      };
+      input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(save, 700); });
+      input.addEventListener("blur", save);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); input.blur(); }
+        if (e.key === "Escape") { e.preventDefault(); input.value = noteOf(p.id); input.blur(); }
+      });
+      return h("div", { class: `note-line ${p.id}` }, h("span", { class: "light", "aria-hidden": "true" }), input);
+    }));
+  panel.hidden = !openLines.has(task.id);
+
+  const button = h("button", {
+    class: "disclose", type: "button", "aria-label": "담당자별 입력", "aria-expanded": String(openLines.has(task.id)),
+    "aria-controls": panelId,
+  });
+  button.addEventListener("click", () => {
+    const open = panel.hidden;
+    if (open) openLines.add(task.id); else openLines.delete(task.id);
+    panel.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+    dots.hidden = open; // the dots only summarise a closed note
+    if (open) panel.querySelector("input")?.focus();
+  });
+  dots.hidden = openLines.has(task.id);
+  return { button: h("span", { class: "disclose-wrap" }, dots, button), panel };
+}
+
+// When typing ends, draw whatever arrived from teammates in the meantime.
+document.addEventListener("focusout", (e) => {
+  if (!e.target.classList?.contains("note-line-input")) return;
+  setTimeout(() => { if (pendingRender && !busy()) render(); }, 250); // after any click that caused the blur
+});
 
 function editorEl(owner, task) {
   const cls = owner === COMMON ? "pc" : owner;
@@ -205,65 +276,6 @@ function nameEl(person) {
     onClick: () => { renaming = person.id; render(); } }, h("span", {}, person.name));
 }
 
-// ---------------------------------------------------------------- quick entry (common card)
-
-const PERSON_EMOJI = { p1: "🦊", p2: "🐳", p3: "🐸", p4: "🦁" };
-let quickOpen = false;
-const quickInput = document.getElementById("quickInput");
-const quickPeople = document.getElementById("quickPeople");
-
-/** Add typed text to `owner`. Empty input just moves focus there. */
-function quickAdd(owner) {
-  const text = quickInput.value.trim();
-  if (!text) {
-    quickInput.focus();
-    return;
-  }
-  const id = newId(); // fixed outside the op so a retried op keeps the same id
-  commit((s) => addTask(s, owner, text, id));
-  quickInput.value = "";
-  quickInput.focus();
-  toast(owner === COMMON ? "공통 업무에 붙였어요" : `${ownerName(owner)}에게 붙였어요`);
-}
-
-for (const p of state.people) {
-  quickPeople.append(h("button", {
-    class: `quick-person ${p.id}`, type: "button", dataset: { id: p.id },
-    onClick: () => quickAdd(p.id),
-  }, h("span", { class: "quick-emoji", "aria-hidden": "true" }, PERSON_EMOJI[p.id]), h("span", { class: "quick-name" }, p.name)));
-}
-
-/** Names can change (rename / other people's edits): update text only, never rebuild the panel. */
-function syncQuickNames() {
-  for (const p of state.people) {
-    const btn = quickPeople.querySelector(`[data-id="${p.id}"]`);
-    if (!btn) continue;
-    btn.querySelector(".quick-name").textContent = p.name;
-    btn.setAttribute("aria-label", `${p.name}에게 붙이기`);
-  }
-}
-
-function toggleQuick() {
-  quickOpen = !quickOpen;
-  document.getElementById("quick").hidden = !quickOpen;
-  const btn = document.querySelector(".expand");
-  btn.setAttribute("aria-expanded", String(quickOpen));
-  btn.firstElementChild.textContent = quickOpen ? "접기" : "펼치기";
-  if (quickOpen) quickInput.focus();
-}
-
-quickInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.isComposing) {
-    e.preventDefault();
-    quickAdd(COMMON);
-  }
-  if (e.key === "Escape") {
-    e.preventDefault();
-    toggleQuick();
-    document.querySelector(".expand")?.focus();
-  }
-});
-
 function renderDone() {
   const doneTasks = state.tasks.filter((t) => t.done);
   const section = document.getElementById("done");
@@ -291,6 +303,7 @@ function renderDone() {
 }
 
 function render() {
+  pendingRender = false;
   if (!busy()) state = sync.mode === "shared" ? sync.view() : local;
   const total = state.tasks.length;
   const done = state.tasks.filter((t) => t.done).length;
@@ -317,11 +330,8 @@ function render() {
       h("h2", { id: "common-title" }, "공통 업무"),
       h("p", {}, "모두의 일"),
       h("span", { class: "count" }, String(tasksOf(state, COMMON).length)),
-      h("button", { class: "add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, "+"),
-      h("button", { class: "expand", type: "button", "aria-expanded": String(quickOpen), "aria-controls": "quick", onClick: toggleQuick },
-        h("span", {}, quickOpen ? "접기" : "펼치기"))));
+      h("button", { class: "add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, "+")));
   document.getElementById("common-drop").replaceChildren(dropZone(COMMON, "wrap"));
-  syncQuickNames();
 
   // Focus synchronously: keystrokes typed right after tapping + must not be lost.
   const area = document.querySelector(".editor");

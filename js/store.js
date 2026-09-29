@@ -67,6 +67,18 @@ export function updateTask(state, id, patch) {
   return { ...state, tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...next } : t)) };
 }
 
+/** One person's input line on a task (used by the expandable rows on common tasks). Empty text clears it. */
+export function setNote(state, id, personId, text) {
+  if (!state.people.some((p) => p.id === personId)) return state;
+  const clean = cleanText(text);
+  const task = state.tasks.find((t) => t.id === id);
+  if (!task || (task.notes?.[personId] ?? "") === clean) return state;
+  const notes = { ...(task.notes ?? {}) };
+  if (clean) notes[personId] = clean;
+  else delete notes[personId];
+  return { ...state, tasks: state.tasks.map((t) => (t.id === id ? { ...t, notes } : t)) };
+}
+
 export function removeTask(state, id) {
   const index = state.tasks.findIndex((t) => t.id === id);
   if (index === -1) return { state, removed: null };
@@ -90,6 +102,17 @@ export function clearDone(state) {
   return { ...state, tasks: state.tasks.filter((t) => !t.done) };
 }
 
+function cleanNotes(raw, people) {
+  const out = {};
+  if (raw && typeof raw === "object") {
+    for (const p of people) {
+      const text = typeof raw[p.id] === "string" ? cleanText(raw[p.id]) : "";
+      if (text) out[p.id] = text;
+    }
+  }
+  return out;
+}
+
 /** Parse stored JSON defensively: anything malformed falls back to a fresh board. */
 export function parse(raw) {
   try {
@@ -104,6 +127,7 @@ export function parse(raw) {
       .map((t) => ({
         id: t.id, text: cleanText(t.text), owner: t.owner, done: Boolean(t.done),
         doneAt: t.done && /^\d{4}-\d{2}-\d{2}$/.test(t.doneAt) ? t.doneAt : null,
+        notes: cleanNotes(t.notes, people),
       }));
     return { version: 1, people, tasks };
   } catch {

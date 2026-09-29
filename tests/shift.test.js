@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { monthGrid, shiftOn } from "../js/shift.js";
-import { addTask, initialState, parse, updateTask } from "../js/store.js";
+import { addTask, initialState, moveTask, parse, setNote, updateTask } from "../js/store.js";
 
 const row = (iso) => ["p1", "p2", "p3", "p4"].map((p) => shiftOn(p, iso));
 
@@ -43,6 +43,23 @@ test("month grid is Sunday-first and covers the whole month", () => {
   assert.ok(oct.every((w) => w.length === 7));
   assert.equal(monthGrid(2026, 2).flat().filter((c) => c.inMonth).length, 28);
   assert.equal(monthGrid(2028, 2).flat().filter((c) => c.inMonth).length, 29);
+});
+
+test("per-person note lines: set, clear, sanitise, survive a move", () => {
+  let s = addTask(initialState(), "common", "공통 점검", "c1");
+  s = setNote(s, "c1", "p2", "  배선 확인  ");
+  s = setNote(s, "c1", "p4", "자재 준비");
+  assert.deepEqual(s.tasks[0].notes, { p2: "배선 확인", p4: "자재 준비" });
+  assert.equal(setNote(s, "c1", "p2", "배선 확인"), s); // unchanged -> same state (no redundant write)
+  assert.equal(setNote(s, "c1", "p9", "x"), s); // unknown person
+  assert.equal(setNote(s, "nope", "p1", "x"), s); // unknown task
+  const moved = moveTask(s, "c1", "p1", 0);
+  assert.deepEqual(moved.tasks[0].notes, { p2: "배선 확인", p4: "자재 준비" });
+  const cleared = setNote(s, "c1", "p2", "   ");
+  assert.deepEqual(cleared.tasks[0].notes, { p4: "자재 준비" });
+  const dirty = { ...s, tasks: [{ ...s.tasks[0], notes: { p1: "ok", p9: "ghost", p2: 5, p3: "  " } }] };
+  assert.deepEqual(parse(JSON.stringify(dirty)).tasks[0].notes, { p1: "ok" });
+  assert.deepEqual(parse(JSON.stringify({ ...s, tasks: [{ ...s.tasks[0], notes: "junk" }] })).tasks[0].notes, {});
 });
 
 test("completion date is kept through storage", () => {

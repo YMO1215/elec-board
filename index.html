@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2a221c">
+  <title>업무 대자보 — 4인 자석 보드</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23e2483d'/%3E%3Ccircle cx='12' cy='11' r='4' fill='%23fff' fill-opacity='.55'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Gaegu:wght@400;700&family=Gowun+Dodum&display=swap">
+  <link rel="stylesheet" href="css/board.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div class="frame">
+    <div class="cork">
+      <header class="masthead">
+        <div class="banner">
+          <span class="pin pin-l" aria-hidden="true"></span>
+          <span class="pin pin-r" aria-hidden="true"></span>
+          <p class="kicker">TEAM MAGNET BOARD</p>
+          <h1>업무 대자보</h1>
+        </div>
+        <p class="stamp" id="stamp" aria-label="오늘 날짜"></p>
+        <div class="head-tools">
+          <p class="tally" id="tally" aria-live="polite"></p>
+          <button class="chalk-btn" id="sweep" type="button">완료 치우기</button>
+        </div>
+      </header>
+
+      <main class="board" id="board" aria-label="업무 보드">
+        <div class="lanes" id="lanes"></div>
+        <section class="common" id="common" aria-labelledby="common-title"></section>
+      </main>
+
+      <p class="howto">자석(메모 왼쪽 끝 동그라미)을 잡아 이름 칸이나 공통 업무로 끌어 붙이세요 · 키보드는 자석에 초점을 두고 방향키 · 이 브라우저에 자동 저장</p>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

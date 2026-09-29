@@ -2,9 +2,8 @@
   "name": "elec-board",
   "private": true,
   "type": "module",
-  "description": "Frontend checks only. The app itself has no Node build step.",
+  "description": "업무 대자보 — static 4-person magnet board. No build step; package.json only runs tests.",
   "scripts": {
-    "test": "node --test tests/js/",
-    "check": "node scripts/check-web.js"
+    "test": "node --test tests/"
   }
 }

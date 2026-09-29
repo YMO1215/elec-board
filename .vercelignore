@@ -1,6 +1,2 @@
-.venv
-data
 tests
-scripts
-package.json
-requirements-dev.txt
+.venv

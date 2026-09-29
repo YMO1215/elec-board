@@ -101,7 +101,7 @@ class LoginThrottle:
 
 @router.get("/auth/state")
 def auth_state(request: Request, conn=Depends(get_conn), settings=Depends(get_settings)):
-    actor = load_actor(conn, request.cookies.get(SESSION_COOKIE))
+    actor = load_actor(conn, request.cookies.get(SESSION_COOKIE), settings)
     return {"needs_setup": org.needs_setup(conn), "me": _me(conn, actor) if actor else None,
             "demo": settings.demo_mode}
 
@@ -115,7 +115,7 @@ def setup(body: SetupBody, response: Response, conn=Depends(get_conn), settings=
                                 password=body.password)
         token, _ = org.create_session(conn, settings, user_id)
     _set_cookie(response, settings, token)
-    return {"me": _me(conn, load_actor(conn, token))}
+    return {"me": _me(conn, load_actor(conn, token, settings))}
 
 
 @router.post("/auth/login")
@@ -135,7 +135,7 @@ def login(body: LoginBody, request: Request, response: Response, conn=Depends(ge
     with tx(conn):
         token, _ = org.create_session(conn, settings, u["id"])
     _set_cookie(response, settings, token)
-    return {"me": _me(conn, load_actor(conn, token))}
+    return {"me": _me(conn, load_actor(conn, token, settings))}
 
 
 @router.post("/auth/logout")
@@ -190,7 +190,7 @@ def accept(token: str, body: AcceptBody, response: Response, conn=Depends(get_co
         user_id = org.accept_invitation(conn, token, body.password)
         session, _ = org.create_session(conn, settings, user_id)
     _set_cookie(response, settings, session)
-    return {"me": _me(conn, load_actor(conn, session))}
+    return {"me": _me(conn, load_actor(conn, session, settings))}
 
 
 @router.get("/team")

@@ -11,7 +11,7 @@ from ..config import Settings
 from ..db import bump_rev, local_today, many, now_iso, one, scalar
 from ..deps import ROLES, Actor, format_roles, parse_roles
 from ..errors import bad_request, conflict, forbidden, not_found
-from ..security import MIN_PASSWORD_LENGTH, hash_password, new_public_id, new_token, token_hash
+from ..security import MIN_PASSWORD_LENGTH, hash_password, new_public_id, new_token, sign_session, token_hash
 from . import kpi, knowledge
 from .team import BOARD_SLOTS, default_initials, get_member, require_assignable
 
@@ -120,6 +120,9 @@ def bootstrap(conn, settings: Settings, *, org_name: str, name: str, email: str,
 def create_session(conn, settings: Settings, user_id: int) -> tuple[str, str]:
     token, csrf = new_token(), new_token(24)
     expires = datetime.now(timezone.utc) + timedelta(days=settings.session_days)
+    if settings.demo_mode:
+        # Demo hosts may run several instances, each with its own /tmp DB.
+        return sign_session(settings.secret_key, user_id, csrf, int(expires.timestamp())), csrf
     conn.execute("DELETE FROM sessions WHERE user_id = ? AND expires_at < ?", (user_id, now_iso()))
     conn.execute("INSERT INTO sessions (token_hash, user_id, csrf, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
                  (token_hash(token), user_id, csrf, now_iso(), expires.isoformat(timespec="seconds")))

@@ -11,7 +11,7 @@ from fastapi import Depends, Request
 from .config import Settings
 from .db import connect, now_iso, one
 from .errors import forbidden, unauthorized
-from .security import token_hash
+from .security import STATELESS_PREFIX, token_hash, verify_session
 
 SESSION_COOKIE = "eb_session"
 CSRF_HEADER = "x-csrf-token"
@@ -60,9 +60,24 @@ class Actor:
             raise forbidden(f"{labels} 권한이 필요합니다.")
 
 
-def load_actor(conn: sqlite3.Connection, session_token: str | None) -> Actor | None:
+def load_actor(conn: sqlite3.Connection, session_token: str | None, settings: Settings | None = None) -> Actor | None:
     if not session_token:
         return None
+    if settings is not None and settings.demo_mode and session_token.startswith(STATELESS_PREFIX + "."):
+        verified = verify_session(settings.secret_key, session_token)
+        if verified is None:
+            return None
+        user_id, csrf = verified
+        r = one(
+            conn,
+            "SELECT u.id AS user_id, u.name, u.email, m.org_id, m.roles, m.board_slot, m.initials, m.active"
+            " FROM users u JOIN memberships m ON m.user_id = u.id WHERE u.id = ?",
+            (user_id,),
+        )
+        if r is None or not r["active"]:
+            return None
+        return Actor(user_id=r["user_id"], org_id=r["org_id"], name=r["name"], email=r["email"],
+                     roles=parse_roles(r["roles"]), board_slot=r["board_slot"], initials=r["initials"], csrf=csrf)
     r = one(
         conn,
         "SELECT s.csrf, s.expires_at, u.id AS user_id, u.name, u.email,"
@@ -86,8 +101,9 @@ def load_actor(conn: sqlite3.Connection, session_token: str | None) -> Actor | N
     )
 
 
-def current_actor(request: Request, conn: sqlite3.Connection = Depends(get_conn)) -> Actor:
-    actor = load_actor(conn, request.cookies.get(SESSION_COOKIE))
+def current_actor(request: Request, conn: sqlite3.Connection = Depends(get_conn),
+                  settings: Settings = Depends(get_settings)) -> Actor:
+    actor = load_actor(conn, request.cookies.get(SESSION_COOKIE), settings)
     if actor is None:
         raise unauthorized()
     if request.method not in SAFE_METHODS:

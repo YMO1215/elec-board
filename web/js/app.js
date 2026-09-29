@@ -182,7 +182,7 @@ async function boot() {
   watchConnectivity();
   onUnauthorized(() => {
     localStorage.removeItem(ME_CACHE_KEY);
-    showAuth((root) => renderLogin(root, () => location.reload()));
+    showAuth((root) => renderLogin(root, () => location.reload(), { demo: document.body.dataset.demo === "true" }));
   });
 
   let state;
@@ -202,6 +202,7 @@ async function boot() {
     return;
   }
   if (state.demo) {
+    document.body.dataset.demo = "true";
     document.querySelectorAll(".brand").forEach((b) => b.append(badge("미리보기 데모", "warn")));
   }
   if (state.needs_setup) {

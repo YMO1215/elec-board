@@ -58,6 +58,30 @@ def new_public_id() -> str:
     return secrets.token_urlsafe(12)
 
 
+STATELESS_PREFIX = "s1"
+
+
+def sign_session(secret: str, user_id: int, csrf: str, expires_at: int) -> str:
+    """Self-contained session token (demo mode on multi-instance hosts, where a
+    DB session written by one instance is invisible to the next)."""
+    body = f"{STATELESS_PREFIX}.{user_id}.{expires_at}.{csrf}"
+    sig = _b64(hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
+    return f"{body}.{sig}"
+
+
+def verify_session(secret: str, token: str, now: float | None = None) -> tuple[int, str] | None:
+    try:
+        prefix, user_id, expires_at, csrf, sig = token.split(".")
+    except ValueError:
+        return None
+    if prefix != STATELESS_PREFIX or int(expires_at) < int(now if now is not None else time.time()):
+        return None
+    expected = sign_session(secret, int(user_id), csrf, int(expires_at)).rsplit(".", 1)[1]
+    if not hmac.compare_digest(expected, sig):
+        return None
+    return int(user_id), csrf
+
+
 def sign_file(secret: str, file_id: int, expires_at: int) -> str:
     msg = f"file:{file_id}:{expires_at}".encode("ascii")
     return _b64(hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).digest())

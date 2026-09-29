@@ -3,6 +3,7 @@ import { h } from "./dom.js";
 import { initialOf } from "./avatar.js";
 import { icon } from "./icons.js";
 import { openCalendar } from "./calendar.js";
+import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
   COMMON, MAX_TEXT, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson,
   activeOf, restoreTask, save, setNote, updateTask,
@@ -12,7 +13,6 @@ import { POLL_MS, createSync } from "./sync.js";
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const DRAG_THRESHOLD = 3;
 const TOAST_MS = 6000;
-const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ---------------------------------------------------------------- storage
 
@@ -123,7 +123,13 @@ function toast(message, action) {
   if (action) {
     box.append(h("button", { type: "button", onClick: () => { action.run(); box.replaceChildren(); } }, action.label));
   }
+  replay(box, "is-in"); // springs up from the bottom each time
   toastTimer = setTimeout(() => box.replaceChildren(), TOAST_MS);
+}
+
+/** A card that just landed somewhere (drag, sheet, keyboard) gets a short ring so the eye can find it. */
+function flash(id) {
+  replay(document.querySelector(`.note[data-id="${id}"]`), "just-dropped");
 }
 
 // ---------------------------------------------------------------- render
@@ -143,11 +149,11 @@ function noteEl(task) {
   return h("article", { class: `note ${cls}`, dataset: { id: task.id } },
     magnet,
     text,
+    extra?.button, // the chevron sits beside the text; the tool row never takes the text's width
     h("div", { class: "note-tools" },
-      h("button", { class: "tool is-done", type: "button", "aria-label": `“${task.text}” 완료`, onClick: () => complete(task) }, icon("check")),
+      h("button", { class: "tool is-done", type: "button", "aria-label": `“${task.text}” 완료`, onClick: (e) => complete(task, e.currentTarget) }, icon("check")),
       h("button", { class: "tool", type: "button", "aria-label": `“${task.text}” 다른 담당자로 이동`, onClick: () => openMoveSheet(task) }, icon("move")),
-      h("button", { class: "tool is-delete", type: "button", "aria-label": `“${task.text}” 삭제`, onClick: () => remove(task) }, icon("x")),
-      extra?.button),
+      h("button", { class: "tool is-delete", type: "button", "aria-label": `“${task.text}” 삭제`, onClick: () => remove(task) }, icon("x"))),
     extra?.panel);
 }
 
@@ -160,7 +166,7 @@ function avatar(cls, name, small = false) {
 function openMoveSheet(task) {
   const targets = [...state.people.map((p) => ({ id: p.id, cls: p.id, name: p.name })), { id: COMMON, cls: "pc", name: "공통 업무" }];
   const dialog = h("dialog", { class: "sheet", "aria-label": "다른 담당자로 이동" });
-  const close = () => dialog.close();
+  const close = () => animateClose(dialog);
   dialog.append(h("div", { class: "sheet-inner" },
     h("header", { class: "sheet-head" },
       h("div", {}, h("h2", {}, "옮기기"), h("p", {}, task.text)),
@@ -173,24 +179,56 @@ function openMoveSheet(task) {
         onClick: () => {
           close();
           commit((s) => moveTask(s, task.id, t.id, 0));
+          flash(task.id);
+          navigator.vibrate?.(10);
           toast(t.id === COMMON ? "공통 업무에 붙였어요" : `${t.name}에게 붙였어요`);
         },
       }, avatar(t.cls, t.name), h("span", { class: "row-name" }, t.name),
       here ? icon("check") : h("span", { class: "row-meta" }, `${activeOf(state, t.id).length}건`));
     }))));
-  dialog.addEventListener("click", (e) => { if (e.target === dialog) close(); });
+  wireDialog(dialog);
   dialog.addEventListener("close", () => dialog.remove());
   document.body.append(dialog);
   dialog.showModal();
 }
 
-/** Check button: the card leaves the board at once and shows up in the completed list. */
-function complete(task) {
+let completeLockUntil = 0; // after a completion the next card slides under the finger; ignore a double tap
+
+/** Check button: the tick pops green, then the card folds away and shows up in the completed list. */
+function complete(task, button) {
+  if (performance.now() < completeLockUntil) return;
+  completeLockUntil = performance.now() + 400;
   const doneAt = todayIso(); // fixed here so a retried op keeps the same date
-  commit((s) => updateTask(s, task.id, { done: true, doneAt }));
-  toast(`“${task.text.slice(0, 18)}” 완료 — 완료 보기에서 볼 수 있어요`, {
-    label: "되돌리기", run: () => commit((s) => updateTask(s, task.id, { done: false, doneAt: null })),
-  });
+  let committed = false;
+  const finish = () => {
+    if (committed) return;
+    committed = true;
+    commit((s) => updateTask(s, task.id, { done: true, doneAt }));
+    toast(`“${task.text.slice(0, 18)}” 완료 — 완료에서 볼 수 있어요`, {
+      label: "되돌리기", run: () => commit((s) => updateTask(s, task.id, { done: false, doneAt: null })),
+    });
+  };
+  navigator.vibrate?.(10);
+  const note = button?.closest(".note");
+  if (!note || reduced()) {
+    finish();
+    return;
+  }
+  if (note.dataset.leaving) return; // double tap
+  note.dataset.leaving = "1";
+  button.classList.add("is-checked");
+  const stack = note.parentElement?.dataset.layout === "stack";
+  note.style.overflow = "hidden";
+  const h0 = `${note.offsetHeight}px`;
+  // hold ~150ms on the green tick, then collapse so the cards below glide up
+  const a = note.animate([
+    { height: h0, opacity: 1, transform: "scale(1)", offset: 0 },
+    { height: h0, opacity: 1, transform: "scale(1)", offset: 0.3 },
+    { height: "0px", opacity: 0, transform: "scale(0.94)", paddingTop: "0px", paddingBottom: "0px",
+      marginBottom: stack ? "-8px" : "0px", borderTopWidth: "0px", borderBottomWidth: "0px" },
+  ], { duration: 520, easing: EASE, fill: "forwards" });
+  a.onfinish = finish;
+  setTimeout(finish, 700); // safety net: never lose the completion
 }
 
 // ---------------------------------------------------------------- per-person lines on common tasks
@@ -236,10 +274,14 @@ function personLines(task) {
   button.addEventListener("click", () => {
     const open = panel.hidden;
     if (open) openLines.add(task.id); else openLines.delete(task.id);
-    panel.hidden = !open;
     button.setAttribute("aria-expanded", String(open));
-    dots.hidden = open; // the dots only summarise a closed note
-    if (open) panel.querySelector("input")?.focus();
+    if (open) {
+      dots.hidden = true; // the dots only summarise a closed note
+      toggleHeight(panel, true);
+      panel.querySelector("input")?.focus({ preventScroll: true });
+    } else {
+      toggleHeight(panel, false, () => { dots.hidden = false; });
+    }
   });
   dots.hidden = openLines.has(task.id);
   return { button: h("span", { class: "disclose-wrap" }, dots, button), panel };
@@ -279,6 +321,11 @@ function editorEl(owner, task) {
   return el;
 }
 
+// Cards that have been on screen before: only genuinely new arrivals (added, undone,
+// moved in by a teammate) rise in. The first paint marks everything as seen.
+const seen = new Set();
+let firstPaint = true;
+
 function dropZone(owner, layout) {
   const tasks = activeOf(state, owner);
   const zone = h("div", { class: "drop", dataset: { owner, layout }, role: "list", "aria-label": `${ownerName(owner)} 업무` });
@@ -286,6 +333,13 @@ function dropZone(owner, layout) {
   for (const t of tasks) {
     const el = editing && editing.id === t.id ? editorEl(owner, t) : noteEl(t);
     el.setAttribute("role", "listitem");
+    if (!seen.has(t.id)) {
+      seen.add(t.id);
+      if (!firstPaint && !reduced()) {
+        el.classList.add("is-entering");
+        el.addEventListener("animationend", () => el.classList.remove("is-entering"), { once: true });
+      }
+    }
     zone.append(el);
   }
   if (!tasks.length && !(editing && editing.owner === owner)) {
@@ -346,13 +400,27 @@ function renderDone() {
     ...cards);
 }
 
+const lastCounts = new Map(); // key -> number, so a changed count can "bump"
+
+/** Set a count element's text; bump it when the number actually changed. */
+function setCount(el, key, n) {
+  const prev = lastCounts.get(key);
+  lastCounts.set(key, n);
+  if (prev !== undefined && prev !== n) queueMicrotask(() => replay(el, "bump"));
+}
+
 function render() {
   pendingRender = false;
   if (!busy()) state = sync.mode === "shared" ? sync.view() : local;
   const total = state.tasks.length;
   const done = state.tasks.filter((t) => t.done).length;
-  document.getElementById("nActive").textContent = total - done ? String(total - done) : "";
-  document.getElementById("nDone").textContent = done ? String(done) : "";
+  const nActive = document.getElementById("nActive");
+  const nDone = document.getElementById("nDone");
+  nActive.textContent = total - done ? String(total - done) : "";
+  nDone.textContent = done ? String(done) : "";
+  setCount(nActive, "active", total - done);
+  setCount(nDone, "done", done);
+  document.getElementById("seg").dataset.sel = view === "done" ? "done" : "board"; // slides the thumb
   document.getElementById("segBoard").setAttribute("aria-pressed", String(view !== "done"));
   document.getElementById("segDone").setAttribute("aria-pressed", String(view === "done"));
   document.getElementById("board").hidden = view === "done";
@@ -363,11 +431,14 @@ function render() {
   }
   const lanes = document.getElementById("lanes");
   lanes.replaceChildren(...state.people.map((p) => {
+    const n = activeOf(state, p.id).length;
+    const count = h("span", { class: "count", "aria-label": `${n}건` }, String(n));
+    setCount(count, p.id, n);
     const lane = h("section", { class: `lane ${p.id}${folded.has(p.id) ? " is-collapsed" : ""}`, "aria-label": `${p.name}의 칸` },
       h("header", { class: "lane-head" },
         avatar(p.id, p.name),
         nameEl(p),
-        h("span", { class: "count", "aria-label": `${activeOf(state, p.id).length}건` }, String(activeOf(state, p.id).length)),
+        count,
         h("button", { class: "icon-btn add", type: "button", "aria-label": `${p.name}에게 업무 추가`, onClick: () => startEdit(p.id, null) }, icon("plus")),
         h("button", { class: "icon-btn collapse", type: "button", "aria-label": `${p.name} 목록`, "aria-expanded": String(!folded.has(p.id)),
           onClick: (e) => {
@@ -379,14 +450,18 @@ function render() {
     return lane;
   }));
 
+  const nCommon = activeOf(state, COMMON).length;
+  const commonCount = h("span", { class: "count" }, String(nCommon));
+  setCount(commonCount, COMMON, nCommon);
   document.getElementById("common-head").replaceChildren(
     h("header", { class: "common-head" },
       avatar("pc", "공통"),
       h("h2", { id: "common-title" }, "공통 업무"),
       h("p", {}, "모두의 일"),
-      h("span", { class: "count" }, String(activeOf(state, COMMON).length)),
+      commonCount,
       h("button", { class: "icon-btn add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, icon("plus"))));
   document.getElementById("common-drop").replaceChildren(dropZone(COMMON, "wrap"));
+  firstPaint = false;
 
   // Focus synchronously: keystrokes typed right after tapping + must not be lost.
   const area = document.querySelector(".editor");
@@ -432,6 +507,7 @@ function keyMove(e, task) {
   if (target) {
     e.preventDefault();
     commit((s) => moveTask(s, task.id, target[0], target[1]), { focusMagnet: task.id });
+    flash(task.id);
   }
 }
 
@@ -538,13 +614,14 @@ function beginDrag(e, id) {
         const changed = JSON.stringify(moved.tasks) !== JSON.stringify(state.tasks);
         if (changed) {
           commit((s) => moveTask(s, id, owner, index));
+          flash(id);
           navigator.vibrate?.(12);
           return;
         }
       }
       render(); // catch up on changes that arrived during the drag
     };
-    if (reducedMotion()) { land(); return; }
+    if (reduced()) { land(); return; }
     const r = placeholder.getBoundingClientRect();
     ghost.classList.add("is-snapping");
     requestAnimationFrame(() => { ghost.style.transform = `translate(${r.left}px, ${r.top}px) scale(1) rotate(0deg)`; });
@@ -601,6 +678,20 @@ async function connect() {
   window.addEventListener("online", () => { sync.flush(); sync.poll(); });
   window.addEventListener("focus", () => sync.poll());
 }
+
+// iOS nav bar: glass + hairline only once content scrolls underneath.
+const topbar = document.querySelector(".topbar");
+let scrollTick = false;
+const onScroll = () => {
+  if (scrollTick) return;
+  scrollTick = true;
+  requestAnimationFrame(() => {
+    scrollTick = false;
+    topbar.classList.toggle("is-scrolled", window.scrollY > 4);
+  });
+};
+window.addEventListener("scroll", onScroll, { passive: true });
+onScroll();
 
 stamp();
 render();

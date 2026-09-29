@@ -124,15 +124,21 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 
 /* ---------------------------------------------------------------- top bar (liquid glass) */
 
+/* iOS navigation bar behaviour: clear at the top, glass + hairline once content scrolls under it */
 .topbar {
   position: sticky;
   top: 0;
   z-index: 20;
   padding-top: env(safe-area-inset-top);
+  background: transparent;
+  border-bottom: 0.5px solid transparent;
+  transition: background-color 0.25s var(--ease), border-color 0.25s var(--ease), box-shadow 0.25s var(--ease);
+}
+.topbar.is-scrolled {
   background: var(--glass);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 0.5px solid var(--separator);
+  border-bottom-color: var(--separator);
   box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 .topbar-inner {
@@ -175,8 +181,10 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .sync[data-tone="wait"]::before { animation: pulse 1.2s var(--ease) infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
 
-/* iOS segmented control */
+/* iOS segmented control: the selection is a thumb that slides between segments */
 .segmented {
+  position: relative;
+  isolation: isolate;
   flex: none;
   display: inline-grid;
   grid-auto-flow: column;
@@ -185,8 +193,22 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
   border-radius: 9px;
   background: var(--fill);
 }
+.seg-thumb {
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 2);
+  border-radius: 7px;
+  background: var(--seg-selected);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 1px 1px rgba(0, 0, 0, 0.04);
+  transition: transform 0.4s var(--ease);
+}
+.segmented[data-sel="done"] .seg-thumb { transform: translateX(100%); }
 .segmented button {
   position: relative;
+  z-index: 1;
   min-height: 32px;
   padding: 0 14px;
   border: 0;
@@ -195,12 +217,13 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
   color: var(--label);
   font-size: 13px;
   line-height: 18px;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
-  transition: background-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  transition: transform 0.2s var(--ease);
 }
+.segmented button:active { transform: scale(0.96); }
 .segmented button::after { content: ""; position: absolute; inset: -6px -2px; } /* 44px touch target */
-.segmented button[aria-pressed="true"] { background: var(--seg-selected); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 1px 1px rgba(0, 0, 0, 0.04); }
+.segmented button[aria-pressed="true"] { font-weight: 600; }
 .segmented .n { margin-left: 5px; color: var(--secondary-label); font-weight: 500; font-variant-numeric: tabular-nums; }
 .segmented .n:empty { display: none; }
 
@@ -238,6 +261,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 
 .lanes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap); }
 .lane {
+  container-type: inline-size; /* lets the header tighten when the lane itself is narrow */
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -274,6 +298,12 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 }
 .name::after { content: ""; position: absolute; inset: -8px 0; } /* 44px touch target */
 .name:hover { background: var(--fill); }
+@container (max-width: 250px) {
+  .lane-head { gap: 6px; }
+  .lane-head .avatar { width: 24px; height: 24px; font-size: 12px; }
+  .name, .name-input { font-size: 17px; letter-spacing: -0.035em; } /* Headline size instead of Title 3 */
+  .count { padding: 0 6px; }
+}
 .name-input {
   flex: 1;
   min-width: 0;
@@ -370,7 +400,9 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
   border-radius: 0 3px 3px 0;
   background: var(--c);
 }
-.note:active { transform: scale(0.98); }
+/* press feedback for the card itself — not when a button inside it is being pressed: scaling the card
+   mid-click turns it into a new layer and the release can miss the button */
+.note:active:not(:has(button:active, input:active)) { transform: scale(0.98); }
 
 /* the grip: reorder handle, deliberately not a person colour */
 .magnet {
@@ -413,7 +445,9 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
   overflow-wrap: anywhere;
   cursor: text;
 }
-.note-tools { grid-column: 3; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+/* Tools never share the text's row: on touch screens they get their own row under the text;
+   with a mouse they float over the card's corner only while hovered (no width taken at all). */
+.note-tools { grid-column: 2 / -1; grid-row: 2; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .tool {
   position: relative;
   display: grid;
@@ -432,9 +466,28 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .tool:active { transform: scale(0.97); }
 .tool.is-done:hover { color: var(--success); }
 .tool.is-delete:hover { color: var(--destructive); }
-@media (hover: hover) {
-  .note .tool { opacity: 0; }
-  .note:hover .tool, .note:focus-within .tool { opacity: 1; }
+@media (hover: hover) and (pointer: fine) {
+  .note-tools {
+    position: absolute;
+    z-index: 2;
+    top: 6px;
+    right: 6px;
+    padding: 2px;
+    border-radius: var(--r-control);
+    background: var(--secondary-background);
+    border: 0.5px solid var(--separator);
+    box-shadow: var(--shadow-float);
+    opacity: 0;
+    transform: translateY(-3px) scale(0.98);
+    transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
+  }
+  /* a mouse click on a card always hovers it first, so the toolbar is already showing;
+     :active keeps it put while pressed (hover can lag after scrolling), so the release lands on the button */
+  .note:hover .note-tools, .note:focus-within .note-tools, .note:active .note-tools, .note[data-leaving] .note-tools {
+    opacity: 1;
+    transform: none;
+  }
+  .note .tool:hover { background: var(--fill); }
 }
 
 /* dragging: quiet at rest, lifted only while a finger / pointer holds it */
@@ -481,7 +534,7 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 
 /* ---------------------------------------------------------------- disclosure + per-person lines (common tasks) */
 
-.disclose-wrap { display: inline-flex; align-items: center; gap: 6px; margin-left: 2px; }
+.disclose-wrap { grid-column: 3; grid-row: 1; display: inline-flex; align-items: center; gap: 6px; margin-left: 2px; }
 .disclose {
   position: relative;
   display: grid;
@@ -507,7 +560,7 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 
 .note-lines {
   grid-column: 2 / -1;
-  grid-row: 2;
+  grid-row: 3;
   display: grid;
   grid-template-columns: minmax(0, 1fr); /* without this the track grows to the inputs' default width */
   gap: 6px;
@@ -727,6 +780,44 @@ dialog.sheet { width: min(420px, calc(100vw - 20px)); max-height: calc(100dvh - 
 }
 .toast button:active { transform: scale(0.97); }
 
+/* ---------------------------------------------------------------- motion (all off with reduced motion, below) */
+
+@keyframes note-in { from { opacity: 0; transform: translateY(8px) scale(0.97); } }
+.note.is-entering { animation: note-in 0.42s var(--ease) both; }
+
+@keyframes check-pop { 0% { transform: scale(1); } 45% { transform: scale(1.22); } 100% { transform: scale(1); } }
+.note .tool.is-checked { background: var(--success); color: #fff; animation: check-pop 0.32s var(--ease); }
+.done-mark.is-new { animation: check-pop 0.32s var(--ease); }
+
+@keyframes drop-ring { from { box-shadow: 0 0 0 4px var(--ring); } to { box-shadow: 0 0 0 0 transparent; } }
+.note.just-dropped { animation: drop-ring 0.8s var(--ease); }
+
+@keyframes bump { 40% { transform: scale(1.22); } }
+.count.bump, .segmented .n.bump { display: inline-block; animation: bump 0.36s var(--ease); }
+
+@keyframes view-in { from { opacity: 0; transform: translateY(6px); } }
+#board:not([hidden]), #done:not([hidden]) { animation: view-in 0.34s var(--ease); }
+
+@keyframes dialog-in { from { opacity: 0; transform: scale(0.94); } }
+@keyframes dialog-out { to { opacity: 0; transform: scale(0.96); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+dialog.cal[open], dialog.sheet[open] { animation: dialog-in 0.38s var(--ease); }
+dialog.cal[open]::backdrop, dialog.sheet[open]::backdrop { animation: fade-in 0.3s var(--ease); }
+dialog.is-closing { animation: dialog-out 0.22s var(--ease) forwards; }
+dialog.is-closing::backdrop { animation: fade-out 0.22s var(--ease) forwards; }
+
+@keyframes slide-from-next { from { opacity: 0; transform: translateX(18px); } }
+@keyframes slide-from-prev { from { opacity: 0; transform: translateX(-18px); } }
+.cal-grid.from-next { animation: slide-from-next 0.32s var(--ease); }
+.cal-grid.from-prev { animation: slide-from-prev 0.32s var(--ease); }
+@keyframes detail-in { from { opacity: 0.2; transform: translateY(4px); } }
+.cal-detail.is-new { animation: detail-in 0.28s var(--ease); }
+
+/* spring-in HUD */
+@keyframes toast-in { from { opacity: 0; transform: translateY(20px) scale(0.92); } }
+.toast.is-in { animation: toast-in 0.5s cubic-bezier(0.34, 1.35, 0.64, 1) both; }
+
 /* ---------------------------------------------------------------- responsive */
 
 @media (max-width: 960px) {
@@ -743,13 +834,14 @@ dialog.sheet { width: min(420px, calc(100vw - 20px)); max-height: calc(100dvh - 
   .lane.is-collapsed .drop { display: none; }
   .lane.is-collapsed .lane-head { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
   .common .drop { grid-template-columns: minmax(0, 1fr); }
-  .note-tools { grid-column: 2; grid-row: 2; }
-  .note-lines { grid-row: 3; }
   .date-btn { font-size: 24px; line-height: 30px; }
   .date-btn::before { inset: -7px 0; }
-  dialog.sheet { width: 100%; max-width: 100%; margin: auto 0 0; border-radius: var(--r-sheet) var(--r-sheet) 0 0; animation: sheet-up var(--snap) var(--ease); }
+  dialog.sheet { width: 100%; max-width: 100%; margin: auto 0 0; border-radius: var(--r-sheet) var(--r-sheet) 0 0; }
+  dialog.sheet[open] { animation: sheet-up 0.42s var(--ease); }
+  dialog.sheet.is-closing { animation: sheet-down 0.26s var(--ease) forwards; }
 }
-@keyframes sheet-up { from { translate: 0 24px; opacity: 0; } }
+@keyframes sheet-up { from { transform: translateY(100%); } }
+@keyframes sheet-down { to { transform: translateY(100%); } }
 @media (max-width: 430px) {
   .sync { font-size: 12px; line-height: 15px; }
   .segmented button { padding: 0 11px; }

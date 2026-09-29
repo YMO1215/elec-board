@@ -1,6 +1,7 @@
 // Month calendar with the 3조 2교대 (주주야야비비) schedule in each person's colour.
 import { h } from "./dom.js";
 import { icon } from "./icons.js";
+import { animateClose, replay, wireDialog } from "./motion.js";
 import { SHIFT_KEY, SHIFT_LABEL, SHIFT_PEOPLE, monthGrid, shiftOn } from "./shift.js";
 
 const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
@@ -33,6 +34,7 @@ export function openCalendar({ people, today }) {
   function select(iso) {
     selected = iso;
     paintDetail();
+    replay(detail, "is-new");
   }
 
   function dayCell(cell) {
@@ -75,17 +77,19 @@ export function openCalendar({ people, today }) {
         h("button", { class: "cal-today", type: "button", onClick: () => { [year, month] = today.split("-").map(Number); selected = today; draw("today"); } }, "오늘"),
         h("button", { class: "icon-btn cal-btn", type: "button", "aria-label": "이전 달", dataset: { nav: "prev" }, onClick: () => nav(-1) }, icon("chevron-left", 20)),
         h("button", { class: "icon-btn cal-btn", type: "button", "aria-label": "다음 달", dataset: { nav: "next" }, onClick: () => nav(1) }, icon("chevron-right", 20)),
-        h("button", { class: "icon-btn cal-btn", type: "button", "aria-label": "닫기", onClick: () => dialog.close() }, icon("x", 20))),
+        h("button", { class: "icon-btn cal-btn", type: "button", "aria-label": "닫기", onClick: () => animateClose(dialog) }, icon("x", 20))),
       h("div", { class: "cal-weekdays", "aria-hidden": "true" }, WEEK.map((w) => h("span", {}, w))),
       grid,
       detail,
       h("p", { class: "cal-legend" }, "주간 · 야간 · 비번 — 주주야야비비 3조 2교대, 담당자 색으로 표시")));
     paintDetail();
+    // the new month slides in from the side it came from
+    if (focus === "prev" || focus === "next") replay(grid, focus === "next" ? "from-next" : "from-prev");
     if (focus === "prev" || focus === "next") dialog.querySelector(`[data-nav="${focus}"]`)?.focus();
     else if (focus === "today") dayButtons.get(today)?.focus();
   }
 
-  dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });
+  wireDialog(dialog);
   dialog.addEventListener("close", () => dialog.remove());
   document.body.append(dialog);
   draw();

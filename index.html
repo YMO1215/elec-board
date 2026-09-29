@@ -18,7 +18,8 @@
       <div class="head-tools">
         <p class="sync" id="sync" role="status" data-tone="wait">연결 중…</p>
         <p class="sr" id="tally" aria-live="polite"></p>
-        <div class="segmented" role="group" aria-label="보기">
+        <div class="segmented" id="seg" data-sel="board" role="group" aria-label="보기">
+          <span class="seg-thumb" aria-hidden="true"></span>
           <button type="button" id="segBoard" aria-pressed="true">진행 중<span class="n" id="nActive"></span></button>
           <button type="button" id="segDone" aria-pressed="false">완료<span class="n" id="nDone"></span></button>
         </div>

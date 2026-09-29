@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { initialOf } from "../js/avatar.js";
 import { monthGrid, shiftOn } from "../js/shift.js";
 import { activeOf, addTask, initialState, moveTask, parse, setNote, tasksOf, updateTask } from "../js/store.js";
 
@@ -76,6 +77,14 @@ test("completed tasks leave the board; positions count only visible tasks", () =
   // an emptied-by-completion lane accepts a card
   const emptied = updateTask(updateTask(s, "c", { done: true }), "a", { done: true });
   assert.deepEqual(activeOf(moveTask(emptied, "x", "p1", 0), "p1").map((t) => t.id), ["x"]);
+});
+
+test("avatar initials tell people apart", () => {
+  assert.deepEqual(["담당자 1", "담당자 2", "담당자 3", "담당자 4"].map(initialOf), ["1", "2", "3", "4"]);
+  assert.equal(initialOf("박검토"), "박");
+  assert.equal(initialOf("  kim "), "K");
+  assert.equal(initialOf(""), "?");
+  assert.equal(initialOf("🦊 여우"), "🦊"); // not split into half a surrogate pair
 });
 
 test("completion date is kept through storage", () => {

@@ -1,5 +1,7 @@
 // 업무 보드: render, magnet drag, inline editing, keyboard moves, undo, team sync.
 import { h } from "./dom.js";
+import { initialOf } from "./avatar.js";
+import { icon } from "./icons.js";
 import { openCalendar } from "./calendar.js";
 import {
   COMMON, MAX_TEXT, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson,
@@ -93,10 +95,12 @@ function showStatus({ mode, pending, detail }) {
   else if (mode === "shared" && detail) [text, tone] = [`저장 실패 — ${detail}`, "warn"];
   else if (mode === "shared") [text, tone] = [pending ? "저장 중…" : "팀과 공유 중", "live"];
   else if (mode === "error") [text, tone] = ["보드 키가 맞지 않아요 — 팀에서 받은 링크로 여세요", "warn"];
-  else if (detail === "not_configured") [text, tone] = ["이 기기에만 저장 (공유 저장소 미연결)", "off"];
+  else if (detail === "not_configured") [text, tone] = ["이 기기에만 저장", "off"];
   else [text, tone] = ["오프라인 · 이 기기에만 저장", "warn"];
   el.textContent = text;
   el.dataset.tone = tone;
+  // the short label stays on one line in the top bar; the reason is one tap / hover away
+  el.title = detail === "not_configured" ? "공유 저장소가 연결되지 않아 이 브라우저에만 저장됩니다." : "";
 }
 
 // ---------------------------------------------------------------- dom helpers
@@ -140,13 +144,47 @@ function noteEl(task) {
     magnet,
     text,
     h("div", { class: "note-tools" },
-      h("button", { class: "tool", type: "button", "aria-label": `“${task.text}” 완료`, onClick: () => complete(task) }, "✓"),
-      h("button", { class: "tool", type: "button", "aria-label": "삭제", onClick: () => remove(task) }, "✕"),
+      h("button", { class: "tool is-done", type: "button", "aria-label": `“${task.text}” 완료`, onClick: () => complete(task) }, icon("check")),
+      h("button", { class: "tool", type: "button", "aria-label": `“${task.text}” 다른 담당자로 이동`, onClick: () => openMoveSheet(task) }, icon("move")),
+      h("button", { class: "tool is-delete", type: "button", "aria-label": `“${task.text}” 삭제`, onClick: () => remove(task) }, icon("x")),
       extra?.button),
     extra?.panel);
 }
 
-/** ✓ : the card leaves the board at once and shows up in the completed list. */
+/** Avatar: person colour + one character. The parent (or the element itself) carries the p1..p4 class. */
+function avatar(cls, name, small = false) {
+  return h("span", { class: `avatar ${cls}${small ? " sm" : ""}`, "aria-hidden": "true" }, initialOf(name));
+}
+
+/** Tap-to-move path for touch screens (dragging stays available): a sheet with the four people + common. */
+function openMoveSheet(task) {
+  const targets = [...state.people.map((p) => ({ id: p.id, cls: p.id, name: p.name })), { id: COMMON, cls: "pc", name: "공통 업무" }];
+  const dialog = h("dialog", { class: "sheet", "aria-label": "다른 담당자로 이동" });
+  const close = () => dialog.close();
+  dialog.append(h("div", { class: "sheet-inner" },
+    h("header", { class: "sheet-head" },
+      h("div", {}, h("h2", {}, "옮기기"), h("p", {}, task.text)),
+      h("button", { class: "icon-btn sheet-close", type: "button", "aria-label": "닫기", onClick: close }, icon("x"))),
+    h("div", { class: "sheet-list" }, targets.map((t) => {
+      const here = t.id === task.owner;
+      return h("button", {
+        class: "sheet-row", type: "button", disabled: here,
+        "aria-label": here ? `${t.name} (현재 위치)` : `${t.name}로 옮기기`,
+        onClick: () => {
+          close();
+          commit((s) => moveTask(s, task.id, t.id, 0));
+          toast(t.id === COMMON ? "공통 업무에 붙였어요" : `${t.name}에게 붙였어요`);
+        },
+      }, avatar(t.cls, t.name), h("span", { class: "row-name" }, t.name),
+      here ? icon("check") : h("span", { class: "row-meta" }, `${activeOf(state, t.id).length}건`));
+    }))));
+  dialog.addEventListener("click", (e) => { if (e.target === dialog) close(); });
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+/** Check button: the card leaves the board at once and shows up in the completed list. */
 function complete(task) {
   const doneAt = todayIso(); // fixed here so a retried op keeps the same date
   commit((s) => updateTask(s, task.id, { done: true, doneAt }));
@@ -158,6 +196,7 @@ function complete(task) {
 // ---------------------------------------------------------------- per-person lines on common tasks
 
 const openLines = new Set(); // task ids whose lines are open; survives re-renders
+const folded = new Set(); // lanes folded on phones (memory only, per session)
 
 function personLines(task) {
   const panelId = `lines-${task.id}`;
@@ -186,14 +225,14 @@ function personLines(task) {
         if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); input.blur(); }
         if (e.key === "Escape") { e.preventDefault(); input.value = noteOf(p.id); input.blur(); }
       });
-      return h("div", { class: `note-line ${p.id}` }, h("span", { class: "light", "aria-hidden": "true" }), input);
+      return h("div", { class: `note-line ${p.id}` }, avatar(p.id, p.name, true), input);
     }));
   panel.hidden = !openLines.has(task.id);
 
   const button = h("button", {
     class: "disclose", type: "button", "aria-label": "담당자별 입력", "aria-expanded": String(openLines.has(task.id)),
     "aria-controls": panelId,
-  });
+  }, icon("chevron-down"));
   button.addEventListener("click", () => {
     const open = panel.hidden;
     if (open) openLines.add(task.id); else openLines.delete(task.id);
@@ -290,16 +329,16 @@ function renderDone() {
       const rows = doneTasks.filter((t) => t.owner === o.id)
         .sort((a, b) => (b.doneAt ?? "").localeCompare(a.doneAt ?? ""));
       return h("article", { class: `done-card ${o.cls}`, "aria-label": `${o.name} 완료 목록` },
-        h("header", { class: "done-card-head" }, h("h3", {}, o.name), h("span", { class: "count" }, String(rows.length))),
+        h("header", { class: "done-card-head" }, avatar(o.cls, o.name), h("h3", {}, o.name), h("span", { class: "count" }, String(rows.length))),
         rows.length ? h("ul", { class: "done-list" }, rows.map((t) => h("li", { class: "done-row" },
-          h("span", { class: "done-mark", "aria-hidden": "true" }, "✓"),
+          h("span", { class: "done-mark", "aria-hidden": "true" }, icon("check", 14)),
           h("div", { class: "done-body" },
             h("p", { class: "done-text" }, t.text),
             h("p", { class: "done-date" }, t.doneAt ? `${Number(t.doneAt.slice(5, 7))}월 ${Number(t.doneAt.slice(8))}일 완료` : "완료")),
           h("div", { class: "done-actions" },
             h("button", { class: "text-btn", type: "button", "aria-label": `“${t.text}” 진행 중으로 되돌리기`,
               onClick: () => commit((s) => updateTask(s, t.id, { done: false, doneAt: null })) }, "되돌리기"),
-            h("button", { class: "tool", type: "button", "aria-label": `“${t.text}” 삭제`, onClick: () => remove(t) }, "✕")))))
+            h("button", { class: "tool is-delete", type: "button", "aria-label": `“${t.text}” 삭제`, onClick: () => remove(t) }, icon("x"))))))
           : h("p", { class: "done-empty" }, "완료한 일이 없어요"));
     });
   section.replaceChildren(
@@ -312,10 +351,10 @@ function render() {
   if (!busy()) state = sync.mode === "shared" ? sync.view() : local;
   const total = state.tasks.length;
   const done = state.tasks.filter((t) => t.done).length;
-  document.getElementById("tally").textContent = total ? `진행 ${total - done} · 완료 ${done}` : "아직 붙인 업무 없음";
-  const doneBtn = document.getElementById("doneBtn");
-  doneBtn.textContent = view === "done" ? "보드로" : done ? `완료 보기 (${done})` : "완료 보기";
-  doneBtn.setAttribute("aria-pressed", String(view === "done"));
+  document.getElementById("nActive").textContent = total - done ? String(total - done) : "";
+  document.getElementById("nDone").textContent = done ? String(done) : "";
+  document.getElementById("segBoard").setAttribute("aria-pressed", String(view !== "done"));
+  document.getElementById("segDone").setAttribute("aria-pressed", String(view === "done"));
   document.getElementById("board").hidden = view === "done";
   document.getElementById("done").hidden = view !== "done";
   if (view === "done") {
@@ -323,19 +362,30 @@ function render() {
     return;
   }
   const lanes = document.getElementById("lanes");
-  lanes.replaceChildren(...state.people.map((p) => h("section", { class: `lane ${p.id}`, "aria-label": `${p.name}의 칸` },
-    h("header", { class: "lane-head" },
-      nameEl(p),
-      h("span", { class: "count", "aria-label": `${activeOf(state, p.id).length}건` }, String(activeOf(state, p.id).length)),
-      h("button", { class: "add", type: "button", "aria-label": `${p.name}에게 업무 추가`, onClick: () => startEdit(p.id, null) }, "+")),
-    dropZone(p.id, "stack"))));
+  lanes.replaceChildren(...state.people.map((p) => {
+    const lane = h("section", { class: `lane ${p.id}${folded.has(p.id) ? " is-collapsed" : ""}`, "aria-label": `${p.name}의 칸` },
+      h("header", { class: "lane-head" },
+        avatar(p.id, p.name),
+        nameEl(p),
+        h("span", { class: "count", "aria-label": `${activeOf(state, p.id).length}건` }, String(activeOf(state, p.id).length)),
+        h("button", { class: "icon-btn add", type: "button", "aria-label": `${p.name}에게 업무 추가`, onClick: () => startEdit(p.id, null) }, icon("plus")),
+        h("button", { class: "icon-btn collapse", type: "button", "aria-label": `${p.name} 목록`, "aria-expanded": String(!folded.has(p.id)),
+          onClick: (e) => {
+            const nowFolded = lane.classList.toggle("is-collapsed"); // in-memory only, per session
+            if (nowFolded) folded.add(p.id); else folded.delete(p.id);
+            e.currentTarget.setAttribute("aria-expanded", String(!nowFolded));
+          } }, icon("chevron-down"))),
+      dropZone(p.id, "stack"));
+    return lane;
+  }));
 
   document.getElementById("common-head").replaceChildren(
     h("header", { class: "common-head" },
+      avatar("pc", "공통"),
       h("h2", { id: "common-title" }, "공통 업무"),
       h("p", {}, "모두의 일"),
       h("span", { class: "count" }, String(activeOf(state, COMMON).length)),
-      h("button", { class: "add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, "+")));
+      h("button", { class: "icon-btn add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, icon("plus"))));
   document.getElementById("common-drop").replaceChildren(dropZone(COMMON, "wrap"));
 
   // Focus synchronously: keystrokes typed right after tapping + must not be lost.
@@ -386,7 +436,7 @@ function keyMove(e, task) {
 }
 
 function announce(text) {
-  document.getElementById("tally").setAttribute("aria-label", text);
+  document.getElementById("tally").textContent = text;
 }
 
 // ---------------------------------------------------------------- magnet drag
@@ -453,7 +503,7 @@ function beginDrag(e, id) {
       note.hidden = true;
       home.zone.insertBefore(placeholder, note);
     }
-    ghost.style.transform = `translate(${ev.clientX - offX}px, ${ev.clientY - offY}px) scale(1.03)`;
+    ghost.style.transform = `translate(${ev.clientX - offX}px, ${ev.clientY - offY}px) scale(1.05) rotate(0.35deg)`;
     place(ev.clientX, ev.clientY);
   };
 
@@ -497,11 +547,11 @@ function beginDrag(e, id) {
     if (reducedMotion()) { land(); return; }
     const r = placeholder.getBoundingClientRect();
     ghost.classList.add("is-snapping");
-    requestAnimationFrame(() => { ghost.style.transform = `translate(${r.left}px, ${r.top}px) scale(1)`; });
+    requestAnimationFrame(() => { ghost.style.transform = `translate(${r.left}px, ${r.top}px) scale(1) rotate(0deg)`; });
     let landed = false;
     const once = () => { if (!landed) { landed = true; land(); } };
     ghost.addEventListener("transitionend", once, { once: true });
-    setTimeout(once, 320);
+    setTimeout(once, 450); // safety net a little longer than the 0.35s snap
   };
   const onUp = (ev) => { if (ev.pointerId === pointerId) finish(false); };
   const onCancel = (ev) => { if (ev.pointerId === pointerId) finish(true); };
@@ -516,7 +566,7 @@ function beginDrag(e, id) {
 
 function stamp() {
   const d = new Date();
-  document.getElementById("stamp").textContent = `${d.getMonth() + 1}월 ${d.getDate()}일 ${WEEKDAYS[d.getDay()]}요일`;
+  document.getElementById("stampText").textContent = `${d.getMonth() + 1}월 ${d.getDate()}일 ${WEEKDAYS[d.getDay()]}요일`;
 }
 
 document.getElementById("stamp").addEventListener("click", () => openCalendar({ people: state.people, today: todayIso() }));
@@ -531,7 +581,8 @@ function setView(next, { push = true } = {}) {
   render();
   window.scrollTo(0, 0);
 }
-document.getElementById("doneBtn").addEventListener("click", () => setView(view === "done" ? "board" : "done"));
+document.getElementById("segBoard").addEventListener("click", () => setView("board"));
+document.getElementById("segDone").addEventListener("click", () => setView("done"));
 window.addEventListener("popstate", () => setView(location.hash === "#done" ? "done" : "board", { push: false }));
 
 // Local-only mode: another tab of this browser changed the board.

@@ -1,5 +1,6 @@
 // Month calendar with the 3조 2교대 (주주야야비비) schedule in each person's colour.
 import { h } from "./dom.js";
+import { icon } from "./icons.js";
 import { SHIFT_KEY, SHIFT_LABEL, SHIFT_PEOPLE, monthGrid, shiftOn } from "./shift.js";
 
 const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
@@ -72,9 +73,9 @@ export function openCalendar({ people, today }) {
       h("header", { class: "cal-head" },
         h("h2", { class: "cal-title" }, `${year}년 ${month}월`),
         h("button", { class: "cal-today", type: "button", onClick: () => { [year, month] = today.split("-").map(Number); selected = today; draw("today"); } }, "오늘"),
-        h("button", { class: "cal-btn", type: "button", "aria-label": "이전 달", dataset: { nav: "prev" }, onClick: () => nav(-1) }, "‹"),
-        h("button", { class: "cal-btn", type: "button", "aria-label": "다음 달", dataset: { nav: "next" }, onClick: () => nav(1) }, "›"),
-        h("button", { class: "cal-btn", type: "button", "aria-label": "닫기", onClick: () => dialog.close() }, "✕")),
+        h("button", { class: "icon-btn cal-btn", type: "button", "aria-label": "이전 달", dataset: { nav: "prev" }, onClick: () => nav(-1) }, icon("chevron-left", 20)),
+        h("button", { class: "icon-btn cal-btn", type: "button", "aria-label": "다음 달", dataset: { nav: "next" }, onClick: () => nav(1) }, icon("chevron-right", 20)),
+        h("button", { class: "icon-btn cal-btn", type: "button", "aria-label": "닫기", onClick: () => dialog.close() }, icon("x", 20))),
       h("div", { class: "cal-weekdays", "aria-hidden": "true" }, WEEK.map((w) => h("span", {}, w))),
       grid,
       detail,

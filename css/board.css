@@ -146,7 +146,14 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
   gap: 12px;
 }
 .app-name { margin: 0; display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; }
-.app-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--tint); }
+.app-mark { /* same mark as the favicon: blue squircle with a white dot */
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 34% 34%, #fff 0 3px, transparent 3.5px),
+    linear-gradient(135deg, #34a0ff, #0063e6);
+}
 .head-tools { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .sync {
   margin: 0;
@@ -744,7 +751,6 @@ dialog.sheet { width: min(420px, calc(100vw - 20px)); max-height: calc(100dvh - 
 }
 @keyframes sheet-up { from { translate: 0 24px; opacity: 0; } }
 @media (max-width: 430px) {
-  .app-title { display: none; }
   .sync { font-size: 12px; line-height: 15px; }
   .segmented button { padding: 0 11px; }
 }

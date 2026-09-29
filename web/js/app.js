@@ -4,6 +4,7 @@ import { fill, h, icon } from "./dom.js";
 import { drafts, getBundle, kick, refreshBundle, syncState, watchConnectivity } from "./offline/sync.js";
 import { currentPath, route, startRouter } from "./router.js";
 import { emit, loadReference, on, store } from "./store.js";
+import { badge } from "./ui.js";
 import { renderInvite, renderLogin, renderSetup } from "./views/auth.js";
 import { renderBoard } from "./views/board.js";
 import { renderDashboard } from "./views/dashboard.js";
@@ -200,6 +201,9 @@ async function boot() {
         h("button", { class: "btn btn-sm", type: "button", onClick: () => location.reload() }, "다시 시도"))));
     return;
   }
+  if (state.demo) {
+    document.querySelectorAll(".brand").forEach((b) => b.append(badge("미리보기 데모", "warn")));
+  }
   if (state.needs_setup) {
     showAuth((root) => renderSetup(root, () => location.reload()));
     return;
@@ -208,7 +212,7 @@ async function boot() {
     localStorage.removeItem(ME_CACHE_KEY); // logged out: never boot offline as the previous user
     const m = location.hash.match(/^#\/invite\/([^?]+)/);
     showAuth((root) => (m ? renderInvite(root, decodeURIComponent(m[1]), () => { location.hash = "#/"; location.reload(); })
-      : renderLogin(root, () => location.reload())));
+      : renderLogin(root, () => location.reload(), { demo: state.demo })));
     return;
   }
   await startApp(state.me);

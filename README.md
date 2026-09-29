@@ -33,6 +33,14 @@ python -m venv .venv
 | 3 | 박검토 | reviewer@demo.local | 검토자·작업자 |
 | 4 | 최설비 | field2@demo.local | 작업자 |
 
+## Vercel 미리보기 데모
+
+`vercel.json` + `api/index.py` 로 Vercel 에 **미리보기 데모**로 올라갑니다(`ELEC_DEMO=true`).
+Vercel 함수에는 영구 디스크가 없어 DB·첨부·PDF 가 `/tmp` 에 있고, 인스턴스가 바뀌면 **데모 데이터로 초기화**됩니다.
+인스턴스마다 DB 가 따로라 가끔 로그인이 풀릴 수 있습니다. 로그인 화면에 데모 계정 버튼이 있습니다.
+실사용은 영구 디스크가 있는 서버에서 `python -m app.cli serve` 로 돌리거나, DB·파일 저장소를 Postgres·Blob 으로 바꿔야 합니다.
+Vercel 프로젝트 환경변수에 `ELEC_SECRET_KEY` 를 넣으면 기본 데모 키 대신 그 값을 씁니다.
+
 ## 테스트
 
 ```powershell

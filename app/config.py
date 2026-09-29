@@ -54,6 +54,7 @@ class Settings:
     knowledge_review_days: int = 180
     pdf_font_path: str | None = None
     setup_token: str | None = None           # if set, first-run setup requires it
+    demo_mode: bool = False                  # throwaway preview (e.g. Vercel /tmp); UI warns
     login_max_failures: int = 5
     login_lock_seconds: int = 300
     allowed_upload_prefixes: tuple[str, ...] = field(default=("image/", "video/", "audio/"))
@@ -84,4 +85,5 @@ class Settings:
             knowledge_review_days=int(os.environ.get("ELEC_KNOWLEDGE_REVIEW_DAYS", "180")),
             pdf_font_path=os.environ.get("ELEC_PDF_FONT") or None,
             setup_token=os.environ.get("ELEC_SETUP_TOKEN") or None,
+            demo_mode=_env_bool("ELEC_DEMO", False),
         )

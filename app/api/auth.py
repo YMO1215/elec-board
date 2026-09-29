@@ -100,9 +100,10 @@ class LoginThrottle:
 
 
 @router.get("/auth/state")
-def auth_state(request: Request, conn=Depends(get_conn)):
+def auth_state(request: Request, conn=Depends(get_conn), settings=Depends(get_settings)):
     actor = load_actor(conn, request.cookies.get(SESSION_COOKIE))
-    return {"needs_setup": org.needs_setup(conn), "me": _me(conn, actor) if actor else None}
+    return {"needs_setup": org.needs_setup(conn), "me": _me(conn, actor) if actor else None,
+            "demo": settings.demo_mode}
 
 
 @router.post("/auth/setup")

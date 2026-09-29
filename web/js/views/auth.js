@@ -46,7 +46,28 @@ export function renderSetup(root, onDone) {
   fill(root, h("div", { class: "auth-wrap" }, brand(), form));
 }
 
-export function renderLogin(root, onDone) {
+const DEMO_ACCOUNTS = [
+  ["admin@demo.local", "김관리 · 관리자"],
+  ["field1@demo.local", "이현장 · 작업자"],
+  ["reviewer@demo.local", "박검토 · 검토자"],
+  ["field2@demo.local", "최설비 · 작업자"],
+];
+const DEMO_PASSWORD = "demo-pass-1234";
+
+function demoNotice(form) {
+  const fillIn = (email) => {
+    form.elements.email.value = email;
+    form.elements.password.value = DEMO_PASSWORD;
+    form.requestSubmit();
+  };
+  return h("div", { class: "callout callout-warn" }, icon("alert"), h("div", { class: "section" },
+    h("strong", null, "미리보기 데모"),
+    h("p", null, "저장한 내용은 서버가 재시작되면 초기화됩니다. 실제 업무 기록에 쓰지 마세요."),
+    h("div", { class: "btn-row" }, DEMO_ACCOUNTS.map(([email, label]) =>
+      h("button", { class: "btn btn-sm", type: "button", onClick: () => fillIn(email) }, `${label}로 로그인`)))));
+}
+
+export function renderLogin(root, onDone, { demo = false } = {}) {
   const err = formError();
   const form = h("form", { class: "card form-grid" },
     h("div", { class: "span-all" }, h("h1", null, "로그인")),
@@ -66,7 +87,7 @@ export function renderLogin(root, onDone) {
       showError(err, e2);
     }
   });
-  fill(root, h("div", { class: "auth-wrap" }, brand(), form));
+  fill(root, h("div", { class: "auth-wrap" }, brand(), demo ? demoNotice(form) : null, form));
   form.querySelector("input").focus();
 }
 

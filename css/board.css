@@ -447,7 +447,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 }
 /* Tools never share the text's row: on touch screens they get their own row under the text;
    with a mouse they float over the card's corner only while hovered (no width taken at all). */
-.note-tools { grid-column: 2 / -1; grid-row: 2; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.note-tools { grid-column: 2 / -1; grid-row: 3; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .tool {
   position: relative;
   display: grid;
@@ -466,6 +466,23 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .tool:active { transform: scale(0.97); }
 .tool.is-done:hover { color: var(--success); }
 .tool.is-delete:hover { color: var(--destructive); }
+.tool[aria-expanded="true"] { color: var(--tint); }
+.tool-badge { /* comment count, tucked on the bubble's corner */
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--tint);
+  color: #fff;
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
 @media (hover: hover) and (pointer: fine) {
   .note-tools {
     position: absolute;
@@ -560,7 +577,7 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 
 .note-lines {
   grid-column: 2 / -1;
-  grid-row: 3;
+  grid-row: 4;
   display: grid;
   grid-template-columns: minmax(0, 1fr); /* without this the track grows to the inputs' default width */
   gap: 6px;
@@ -583,6 +600,98 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
   letter-spacing: inherit;
 }
 .note-line-input::placeholder { color: var(--tertiary-label); }
+
+/* ---------------------------------------------------------------- comments under a card */
+
+.note-comments {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 0.5px solid var(--separator);
+}
+.comment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0 2px 4px;
+}
+.comment-text {
+  margin: 0;
+  color: var(--secondary-label);
+  font-size: 15px; /* Subheadline 15/20 */
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.comment-time { color: var(--tertiary-label); font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.comment-del {
+  position: relative;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--tertiary-label);
+  transition: background-color 0.2s var(--ease), color 0.2s var(--ease), opacity 0.2s var(--ease);
+}
+.comment-del::after { content: ""; position: absolute; inset: -11px -6px; } /* 44px tall target */
+.comment-del:hover { background: var(--fill); color: var(--destructive); }
+@media (hover: hover) and (pointer: fine) { /* mouse: the x shows on the row being pointed at */
+  .comment-del { opacity: 0; }
+  .comment:hover .comment-del, .comment-del:focus-visible { opacity: 1; }
+}
+.comment-more {
+  justify-self: start;
+  min-height: 28px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--tint);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+.composer { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.comment-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0.5px solid var(--separator);
+  border-radius: 18px; /* capsule, like a message field */
+  background: var(--secondary-background);
+  color: var(--label);
+  font: inherit;
+  font-size: 16px; /* 16px+ keeps iOS Safari from zooming on focus */
+  letter-spacing: inherit;
+}
+.comment-input::placeholder { color: var(--tertiary-label); }
+.comment-send {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--tint);
+  color: #fff;
+  transition: background-color 0.2s var(--ease), transform 0.2s var(--ease), opacity 0.2s var(--ease);
+}
+.comment-send::after { content: ""; position: absolute; inset: -7px; }
+.comment-send:disabled { background: var(--fill-strong); color: var(--tertiary-label); }
+.comment-send:not(:disabled):active { transform: scale(0.92); }
 
 /* ---------------------------------------------------------------- common strip */
 
@@ -640,6 +749,24 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .text-btn::after { content: ""; position: absolute; inset: -6px -2px; }
 .text-btn:hover { background: var(--fill); }
 .text-btn:active { transform: scale(0.97); }
+.text-btn .icon { vertical-align: -3px; margin-right: 4px; }
+
+/* trash: reached from the completed screen's header */
+.done-head .push-right { margin-left: auto; align-self: center; }
+.trash-link { display: inline-flex; align-items: center; gap: 0; color: var(--secondary-label); }
+.trash-link .icon { margin-right: 4px; }
+.trash-link:hover { color: var(--label); }
+.trash-link .n { margin-left: 6px; color: var(--tertiary-label); font-variant-numeric: tabular-nums; }
+.back-btn { display: inline-flex; align-items: center; align-self: center; padding-left: 2px; }
+.back-btn .icon { margin-right: 0; }
+.trash-card { grid-column: 1 / -1; }
+.trash-card .done-date { color: var(--secondary-label); }
+.danger { color: var(--destructive); }
+/* permanent actions take two taps: the first one arms the button (red, with a label) */
+.is-armed { background: var(--destructive) !important; color: #fff !important; }
+.tool.is-armed { width: auto; padding: 0 10px 0 8px; gap: 4px; display: inline-flex; }
+.arm-label { font-size: 13px; line-height: 18px; font-weight: 600; white-space: nowrap; }
+.text-btn.is-armed .arm-label { margin-left: 6px; }
 
 /* ---------------------------------------------------------------- dialogs: calendar + move sheet (opaque, 20px) */
 

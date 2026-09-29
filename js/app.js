@@ -6,7 +6,8 @@ import { openCalendar } from "./calendar.js";
 import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
   COMMON, MAX_TEXT, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson,
-  activeOf, restoreTask, save, setNote, updateTask,
+  activeOf, addComment, doneOf, emptyTrash, removeComment, restoreFromTrash, restoreTask, save, setNote, trashOf,
+  trashTask, updateTask,
 } from "./store.js";
 import { POLL_MS, createSync } from "./sync.js";
 
@@ -33,7 +34,8 @@ let state = local; // what the screen shows
 let editing = null; // { owner, id|null }
 let renaming = null; // person id
 let dragging = false;
-let view = location.hash === "#done" ? "done" : "board";
+const viewFromHash = () => (location.hash === "#trash" ? "trash" : location.hash === "#done" ? "done" : "board");
+let view = viewFromHash(); // board | done | trash (trash lives inside the 완료 screen)
 
 /** Optional board key: open the board once with `#k=<key>` and it is remembered. */
 function readKey() {
@@ -47,7 +49,7 @@ function readKey() {
 
 const sync = createSync({ key: readKey(), onChange: () => refresh(), onStatus: showStatus });
 
-const typingInNote = () => document.activeElement?.classList?.contains("note-line-input") ?? false;
+const typingInNote = () => ["note-line-input", "comment-input"].some((c) => document.activeElement?.classList?.contains(c));
 let quiet = false; // a change whose result is already on screen (the user just typed it): don't redraw
 let pendingRender = false; // a redraw was skipped while the user was busy
 
@@ -127,6 +129,84 @@ function toast(message, action) {
   toastTimer = setTimeout(() => box.replaceChildren(), TOAST_MS);
 }
 
+// ---------------------------------------------------------------- comments under a card
+
+const openComments = new Set(); // cards whose comment box is open (per session)
+const expandedComments = new Set(); // cards showing all comments, not just the latest
+const LATEST_COMMENTS = 2;
+let focusComposer = null; // put the caret back into this card's comment box after the next render
+
+function two(n) {
+  return String(n).padStart(2, "0");
+}
+
+/** "14:05" today, "10/1 14:05" otherwise (local time). */
+function commentTime(iso) {
+  const d = new Date(iso);
+  const day = `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+  const hm = `${two(d.getHours())}:${two(d.getMinutes())}`;
+  return day === todayIso() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
+function toggleComposer(taskId) {
+  if (openComments.has(taskId)) {
+    openComments.delete(taskId);
+  } else {
+    openComments.add(taskId);
+    focusComposer = taskId;
+  }
+  render();
+}
+
+function commentsEl(task) {
+  const all = [...(task.comments ?? [])].sort((a, b) => a.at.localeCompare(b.at));
+  const open = openComments.has(task.id);
+  if (!all.length && !open) return null;
+  const shown = expandedComments.has(task.id) ? all : all.slice(-LATEST_COMMENTS);
+  const hidden = all.length - shown.length;
+
+  let composer = null;
+  if (open) {
+    const input = h("input", {
+      class: "comment-input", type: "text", maxlength: String(MAX_TEXT), autocomplete: "off", enterkeyhint: "send",
+      placeholder: "코멘트 추가", "aria-label": `“${task.text}”에 코멘트`,
+    });
+    const send = h("button", { class: "comment-send", type: "button", "aria-label": "코멘트 보내기", disabled: true }, icon("arrow-up", 16));
+    const submit = () => {
+      const text = input.value.trim();
+      if (!text) return;
+      const id = newId(); // fixed outside the op so a retried op is identical
+      const at = new Date().toISOString();
+      input.value = "";
+      focusComposer = task.id; // keep typing the next one
+      input.blur(); // leave "typing" so the render below is not deferred
+      commit((s) => addComment(s, task.id, text, id, at));
+    };
+    input.addEventListener("input", () => { send.disabled = !input.value.trim(); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); }
+      if (e.key === "Escape") { e.preventDefault(); input.blur(); toggleComposer(task.id); }
+    });
+    send.addEventListener("click", submit);
+    composer = h("div", { class: "composer" }, input, send);
+  }
+
+  return h("div", { class: "note-comments", role: "list", "aria-label": "코멘트" },
+    hidden ? h("button", { class: "comment-more", type: "button", onClick: () => { expandedComments.add(task.id); render(); } },
+      `이전 코멘트 ${hidden}개 보기`) : null,
+    shown.map((c) => h("div", { class: "comment", role: "listitem", dataset: { id: c.id } },
+      h("p", { class: "comment-text" }, c.text),
+      h("span", { class: "comment-time" }, commentTime(c.at)),
+      h("button", {
+        class: "comment-del", type: "button", "aria-label": `코멘트 “${c.text.slice(0, 20)}” 삭제`,
+        onClick: () => {
+          commit((s) => removeComment(s, task.id, c.id));
+          toast("코멘트를 지웠어요", { label: "되돌리기", run: () => commit((s) => addComment(s, task.id, c.text, c.id, c.at)) });
+        },
+      }, icon("x", 14)))),
+    composer);
+}
+
 /** A card that just landed somewhere (drag, sheet, keyboard) gets a short ring so the eye can find it. */
 function flash(id) {
   replay(document.querySelector(`.note[data-id="${id}"]`), "just-dropped");
@@ -146,14 +226,21 @@ function noteEl(task) {
   magnet.addEventListener("pointerdown", (e) => beginDrag(e, task.id));
   magnet.addEventListener("keydown", (e) => keyMove(e, task));
   const extra = task.owner === COMMON ? personLines(task) : null; // common tasks: one input line per person
+  const nComments = (task.comments ?? []).length;
   return h("article", { class: `note ${cls}`, dataset: { id: task.id } },
     magnet,
     text,
     extra?.button, // the chevron sits beside the text; the tool row never takes the text's width
+    commentsEl(task),
     h("div", { class: "note-tools" },
       h("button", { class: "tool is-done", type: "button", "aria-label": `“${task.text}” 완료`, onClick: (e) => complete(task, e.currentTarget) }, icon("check")),
+      h("button", {
+        class: "tool", type: "button", "aria-expanded": String(openComments.has(task.id)),
+        "aria-label": nComments ? `코멘트 ${nComments}개, 코멘트 달기` : "코멘트 달기",
+        onClick: () => toggleComposer(task.id),
+      }, icon("comment"), nComments ? h("span", { class: "tool-badge", "aria-hidden": "true" }, String(nComments)) : null),
       h("button", { class: "tool", type: "button", "aria-label": `“${task.text}” 다른 담당자로 이동`, onClick: () => openMoveSheet(task) }, icon("move")),
-      h("button", { class: "tool is-delete", type: "button", "aria-label": `“${task.text}” 삭제`, onClick: () => remove(task) }, icon("x"))),
+      h("button", { class: "tool is-delete", type: "button", "aria-label": `“${task.text}” 휴지통으로`, onClick: () => remove(task) }, icon("x"))),
     extra?.panel);
 }
 
@@ -289,7 +376,7 @@ function personLines(task) {
 
 // When typing ends, draw whatever arrived from teammates in the meantime.
 document.addEventListener("focusout", (e) => {
-  if (!e.target.classList?.contains("note-line-input")) return;
+  if (!["note-line-input", "comment-input"].some((c) => e.target.classList?.contains(c))) return;
   setTimeout(() => { if (pendingRender && !busy()) render(); }, 250); // after any click that caused the blur
 });
 
@@ -374,8 +461,77 @@ function nameEl(person) {
     onClick: () => { renaming = person.id; render(); } }, h("span", {}, person.name));
 }
 
+const ARM_MS = 3000; // how long an armed (red) button waits for the confirming tap
+
+/** Two-step button for permanent actions: the first tap arms it (red, labelled), the second runs it. */
+function armed(button, label, run) {
+  let timer = null;
+  button.addEventListener("click", () => {
+    if (!button.classList.contains("is-armed")) {
+      const plain = [...button.childNodes];
+      const plainLabel = button.getAttribute("aria-label");
+      button.classList.add("is-armed");
+      // text buttons swap their words; icon buttons keep the icon and grow a label
+      if (button.classList.contains("text-btn")) button.replaceChildren(label);
+      else button.append(h("span", { class: "arm-label" }, label));
+      button.setAttribute("aria-label", `${label} — 한 번 더 누르면 실행`);
+      timer = setTimeout(() => {
+        button.classList.remove("is-armed");
+        button.replaceChildren(...plain);
+        button.setAttribute("aria-label", plainLabel);
+      }, ARM_MS);
+      return;
+    }
+    clearTimeout(timer);
+    run();
+  });
+  return button;
+}
+
+function ownerOf(id) {
+  return id === COMMON ? { cls: "pc", name: "공통 업무" } : { cls: id, name: state.people.find((p) => p.id === id)?.name ?? "" };
+}
+
+function renderTrash() {
+  const items = trashOf(state);
+  const section = document.getElementById("done");
+  const header = h("header", { class: "done-head" },
+    h("button", { class: "text-btn back-btn", type: "button", onClick: () => setView("done") }, icon("chevron-left", 18), "완료"),
+    h("h2", { id: "done-title" }, "휴지통"),
+    h("p", {}, `${items.length}건`),
+    items.length ? armed(h("button", { class: "text-btn danger push-right", type: "button", "aria-label": "휴지통 비우기" }, "비우기"),
+      "모두 영구 삭제", () => {
+        commit((s) => emptyTrash(s));
+        toast("휴지통을 비웠어요");
+      }) : null);
+  const list = items.length
+    ? h("article", { class: "done-card trash-card", "aria-label": "휴지통 목록" },
+      h("ul", { class: "done-list" }, items.map((t) => {
+        const o = ownerOf(t.owner);
+        const d = new Date(t.deletedAt);
+        return h("li", { class: "done-row" },
+          avatar(o.cls, o.name, true),
+          h("div", { class: "done-body" },
+            h("p", { class: "done-text" }, t.text),
+            h("p", { class: "done-date" }, `${o.name} · ${d.getMonth() + 1}월 ${d.getDate()}일 삭제${t.done ? " · 완료했던 일" : ""}`)),
+          h("div", { class: "done-actions" },
+            h("button", { class: "text-btn", type: "button", "aria-label": `“${t.text}” 복구`,
+              onClick: () => {
+                commit((s) => restoreFromTrash(s, t.id));
+                toast(t.done ? "완료 목록으로 복구했어요" : `${o.name} 칸으로 복구했어요`);
+              } }, icon("restore", 16), "복구"),
+            armed(h("button", { class: "tool is-delete", type: "button", "aria-label": `“${t.text}” 영구 삭제` }, icon("trash")),
+              "영구 삭제", () => {
+                commit((s) => removeTask(s, t.id).state);
+                toast("영구 삭제했어요");
+              })));
+      })))
+    : h("div", { class: "done-card trash-card empty" }, h("p", { class: "done-empty" }, "휴지통이 비어 있어요. 지운 업무는 여기서 복구할 수 있어요."));
+  section.replaceChildren(header, list);
+}
+
 function renderDone() {
-  const doneTasks = state.tasks.filter((t) => t.done);
+  const doneTasks = doneOf(state);
   const section = document.getElementById("done");
   const cards = [...state.people.map((p) => ({ id: p.id, cls: p.id, name: p.name })), { id: COMMON, cls: "pc", name: "공통 업무" }]
     .map((o) => {
@@ -392,11 +548,14 @@ function renderDone() {
           h("div", { class: "done-actions" },
             h("button", { class: "text-btn", type: "button", "aria-label": `“${t.text}” 진행 중으로 되돌리기`,
               onClick: () => commit((s) => updateTask(s, t.id, { done: false, doneAt: null })) }, "되돌리기"),
-            h("button", { class: "tool is-delete", type: "button", "aria-label": `“${t.text}” 삭제`, onClick: () => remove(t) }, icon("x"))))))
+            h("button", { class: "tool is-delete", type: "button", "aria-label": `“${t.text}” 휴지통으로`, onClick: () => remove(t) }, icon("x"))))))
           : h("p", { class: "done-empty" }, "완료한 일이 없어요"));
     });
   section.replaceChildren(
-    h("header", { class: "done-head" }, h("h2", { id: "done-title" }, "완료한 일"), h("p", {}, `전체 ${doneTasks.length}건`)),
+    h("header", { class: "done-head" }, h("h2", { id: "done-title" }, "완료한 일"), h("p", {}, `전체 ${doneTasks.length}건`),
+      h("button", { class: "text-btn trash-link push-right", type: "button", "aria-label": `휴지통 ${trashOf(state).length}건` ,
+        onClick: () => setView("trash") },
+      icon("trash", 18), "휴지통", trashOf(state).length ? h("span", { class: "n" }, String(trashOf(state).length)) : null)),
     ...cards);
 }
 
@@ -412,21 +571,26 @@ function setCount(el, key, n) {
 function render() {
   pendingRender = false;
   if (!busy()) state = sync.mode === "shared" ? sync.view() : local;
-  const total = state.tasks.length;
-  const done = state.tasks.filter((t) => t.done).length;
+  const active = state.tasks.filter((t) => !t.done && !t.deletedAt).length;
+  const done = doneOf(state).length;
   const nActive = document.getElementById("nActive");
   const nDone = document.getElementById("nDone");
-  nActive.textContent = total - done ? String(total - done) : "";
+  nActive.textContent = active ? String(active) : "";
   nDone.textContent = done ? String(done) : "";
-  setCount(nActive, "active", total - done);
+  setCount(nActive, "active", active);
   setCount(nDone, "done", done);
-  document.getElementById("seg").dataset.sel = view === "done" ? "done" : "board"; // slides the thumb
-  document.getElementById("segBoard").setAttribute("aria-pressed", String(view !== "done"));
-  document.getElementById("segDone").setAttribute("aria-pressed", String(view === "done"));
-  document.getElementById("board").hidden = view === "done";
-  document.getElementById("done").hidden = view !== "done";
+  const onDone = view !== "board";
+  document.getElementById("seg").dataset.sel = onDone ? "done" : "board"; // slides the thumb
+  document.getElementById("segBoard").setAttribute("aria-pressed", String(!onDone));
+  document.getElementById("segDone").setAttribute("aria-pressed", String(onDone));
+  document.getElementById("board").hidden = onDone;
+  document.getElementById("done").hidden = !onDone;
   if (view === "done") {
     renderDone();
+    return;
+  }
+  if (view === "trash") {
+    renderTrash();
     return;
   }
   const lanes = document.getElementById("lanes");
@@ -474,6 +638,10 @@ function render() {
     nameInput.focus();
     nameInput.select();
   }
+  if (focusComposer) {
+    document.querySelector(`.note[data-id="${focusComposer}"] .comment-input`)?.focus({ preventScroll: true });
+    focusComposer = null;
+  }
 }
 
 function startEdit(owner, id) {
@@ -482,10 +650,9 @@ function startEdit(owner, id) {
 }
 
 function remove(task) {
-  const { removed } = removeTask(state, task.id);
-  if (!removed) return;
-  commit((s) => removeTask(s, task.id).state);
-  toast(`“${task.text.slice(0, 18)}” 뗐어요`, { label: "되돌리기", run: () => commit((s) => restoreTask(s, removed)) });
+  const at = new Date().toISOString(); // fixed here so a retried op is identical
+  commit((s) => trashTask(s, task.id, at));
+  toast(`“${task.text.slice(0, 18)}” 휴지통으로 옮겼어요`, { label: "되돌리기", run: () => commit((s) => restoreFromTrash(s, task.id)) });
 }
 
 // ---------------------------------------------------------------- keyboard moves
@@ -654,14 +821,15 @@ function setView(next, { push = true } = {}) {
   view = next;
   editing = null;
   renaming = null;
-  if (push) history.pushState(null, "", next === "done" ? "#done" : location.pathname + location.search);
+  if (push) history.pushState(null, "", next === "board" ? location.pathname + location.search : `#${next}`);
   render();
   window.scrollTo(0, 0);
 }
 // Tapping the segment that is already selected flips to the other one.
+// (the trash is part of the 완료 screen, so 완료 counts as selected there)
 document.getElementById("segBoard").addEventListener("click", () => setView(view === "board" ? "done" : "board"));
-document.getElementById("segDone").addEventListener("click", () => setView(view === "done" ? "board" : "done"));
-window.addEventListener("popstate", () => setView(location.hash === "#done" ? "done" : "board", { push: false }));
+document.getElementById("segDone").addEventListener("click", () => setView(view === "board" ? "done" : "board"));
+window.addEventListener("popstate", () => setView(viewFromHash(), { push: false }));
 
 // Local-only mode: another tab of this browser changed the board.
 window.addEventListener("storage", (e) => {

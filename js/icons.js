@@ -10,6 +10,10 @@ const PATHS = {
   "chevron-right": "M9.5 6.5L15 12l-5.5 5.5",
   // two opposing arrows: "move to another lane"
   move: "M4 8.5h13M13.5 5l3.5 3.5-3.5 3.5M20 15.5H7M10.5 12l-3.5 3.5 3.5 3.5",
+  trash: "M4.5 7h15M9.5 7V4.5h5V7M6.5 7l.9 12.5h9.2L17.5 7M10.2 11v5M13.8 11v5",
+  comment: "M5.5 5h13A1.5 1.5 0 0 1 20 6.5v8a1.5 1.5 0 0 1-1.5 1.5H11l-4.5 3.5V16h-1A1.5 1.5 0 0 1 4 14.5v-8A1.5 1.5 0 0 1 5.5 5z",
+  "arrow-up": "M12 18.5V6M6.5 11.5L12 6l5.5 5.5",
+  restore: "M5 12a7 7 0 1 0 2.1-5M5 4.5V9h4.5",
 };
 
 /** Returns a new decorative <svg>. Give the button that holds it an aria-label. */

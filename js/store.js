@@ -24,9 +24,19 @@ export function tasksOf(state, owner) {
   return state.tasks.filter((t) => t.owner === owner);
 }
 
-/** What the board shows: completed tasks leave the board and live in the completed list. */
+/** What the board shows: completed and trashed tasks leave the board. */
 export function activeOf(state, owner) {
-  return state.tasks.filter((t) => t.owner === owner && !t.done);
+  return state.tasks.filter((t) => t.owner === owner && !t.done && !t.deletedAt);
+}
+
+/** Completed list: done and not in the trash. */
+export function doneOf(state) {
+  return state.tasks.filter((t) => t.done && !t.deletedAt);
+}
+
+/** Trash, most recently deleted first. */
+export function trashOf(state) {
+  return state.tasks.filter((t) => t.deletedAt).sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
 }
 
 export function newId() {
@@ -53,7 +63,7 @@ export function moveTask(state, id, owner, index) {
   const task = state.tasks.find((t) => t.id === id);
   if (!task || !owners(state).includes(owner)) return state;
   const rest = state.tasks.filter((t) => t.id !== id);
-  const lane = rest.filter((t) => t.owner === owner && !t.done);
+  const lane = rest.filter((t) => t.owner === owner && !t.done && !t.deletedAt);
   const at = Math.max(0, Math.min(index, lane.length));
   let globalIdx;
   if (lane.length === 0) globalIdx = rest.length;
@@ -82,6 +92,41 @@ export function setNote(state, id, personId, text) {
   if (clean) notes[personId] = clean;
   else delete notes[personId];
   return { ...state, tasks: state.tasks.map((t) => (t.id === id ? { ...t, notes } : t)) };
+}
+
+/** Delete = move to the trash (recoverable). `at` is an ISO timestamp fixed by the caller. */
+export function trashTask(state, id, at) {
+  if (!state.tasks.some((t) => t.id === id && !t.deletedAt)) return state;
+  return updateTask(state, id, { deletedAt: at });
+}
+
+export function restoreFromTrash(state, id) {
+  if (!state.tasks.some((t) => t.id === id && t.deletedAt)) return state;
+  return updateTask(state, id, { deletedAt: null });
+}
+
+/** Permanently remove everything in the trash. */
+export function emptyTrash(state) {
+  if (!state.tasks.some((t) => t.deletedAt)) return state;
+  return { ...state, tasks: state.tasks.filter((t) => !t.deletedAt) };
+}
+
+export const MAX_COMMENTS = 100;
+
+/** Append a comment under a task. `id` and `at` are fixed by the caller so a retried op is identical. */
+export function addComment(state, taskId, text, id, at) {
+  const clean = cleanText(text);
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!clean || !task || (task.comments ?? []).some((c) => c.id === id)) return state;
+  const comments = [...(task.comments ?? []), { id, text: clean, at }].slice(-MAX_COMMENTS);
+  return { ...state, tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, comments } : t)) };
+}
+
+export function removeComment(state, taskId, commentId) {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task || !(task.comments ?? []).some((c) => c.id === commentId)) return state;
+  const comments = task.comments.filter((c) => c.id !== commentId);
+  return { ...state, tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, comments } : t)) };
 }
 
 export function removeTask(state, id) {
@@ -118,6 +163,16 @@ function cleanNotes(raw, people) {
   return out;
 }
 
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/;
+
+function cleanComments(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c) => c && typeof c.id === "string" && typeof c.at === "string" && ISO_TIME.test(c.at) && cleanText(c.text))
+    .map((c) => ({ id: c.id, text: cleanText(c.text), at: c.at }))
+    .slice(-MAX_COMMENTS);
+}
+
 /** Parse stored JSON defensively: anything malformed falls back to a fresh board. */
 export function parse(raw) {
   try {
@@ -133,6 +188,8 @@ export function parse(raw) {
         id: t.id, text: cleanText(t.text), owner: t.owner, done: Boolean(t.done),
         doneAt: t.done && /^\d{4}-\d{2}-\d{2}$/.test(t.doneAt) ? t.doneAt : null,
         notes: cleanNotes(t.notes, people),
+        comments: cleanComments(t.comments),
+        deletedAt: typeof t.deletedAt === "string" && ISO_TIME.test(t.deletedAt) ? t.deletedAt : null,
       }));
     return { version: 1, people, tasks };
   } catch {

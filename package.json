@@ -1,0 +1,10 @@
+{
+  "name": "elec-board",
+  "private": true,
+  "type": "module",
+  "description": "Frontend checks only. The app itself has no Node build step.",
+  "scripts": {
+    "test": "node --test tests/js/",
+    "check": "node scripts/check-web.js"
+  }
+}

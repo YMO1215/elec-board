@@ -1,6 +1,6 @@
 // Vercel function: GET/PUT the shared board. Storage = Upstash Redis
 // (Vercel Marketplace integration env vars). Optional BOARD_KEY protects writes and reads.
-import { MAX_BODY_BYTES, handle, storeFromEnv } from "../lib/shared-board.js";
+import { MAX_BODY_BYTES, handle, storageEnvNames, storeFromEnv } from "../lib/shared-board.js";
 
 export default async function handler(req, res) {
   let body = req.body;
@@ -12,8 +12,10 @@ export default async function handler(req, res) {
   }
   res.setHeader("Cache-Control", "no-store");
   try {
+    const store = storeFromEnv(process.env);
     const out = await handle({ method: req.method, query: req.query || {}, body },
-      { store: storeFromEnv(process.env), key: process.env.BOARD_KEY || null });
+      { store, key: process.env.BOARD_KEY || null });
+    if (!store) out.json.env_seen = storageEnvNames(process.env); // names only, to diagnose
     return res.status(out.status).json(out.json);
   } catch (err) {
     return res.status(502).json({ error: "storage_error", message: String(err?.message || err) });

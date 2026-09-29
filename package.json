@@ -2,8 +2,11 @@
   "name": "elec-board",
   "private": true,
   "type": "module",
-  "description": "업무 대자보 — static 4-person magnet board. No build step; package.json only runs tests.",
+  "description": "업무 보드 — static 4-person magnet board + one Vercel function for team sharing.",
   "scripts": {
     "test": "node --test tests/"
+  },
+  "dependencies": {
+    "redis": "^4.7.0"
   }
 }

@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { handle, memoryStore, redisStore } from "../lib/shared-board.js";
+import { handle, memoryStore, redisConfig, redisStore, storageEnvNames } from "../lib/shared-board.js";
+
+test("storage env detection covers the Vercel integrations", () => {
+  assert.deepEqual(redisConfig({ KV_REST_API_URL: "https://a", KV_REST_API_TOKEN: "t" }), { kind: "rest", url: "https://a", token: "t" });
+  assert.deepEqual(redisConfig({ UPSTASH_REDIS_REST_URL: "https://b", UPSTASH_REDIS_REST_TOKEN: "u" }), { kind: "rest", url: "https://b", token: "u" });
+  assert.deepEqual(redisConfig({ BOARD_REST_API_URL: "https://c", BOARD_REST_API_TOKEN: "v" }).url, "https://c"); // custom prefix
+  assert.deepEqual(redisConfig({ REDIS_URL: "redis://d:6379" }), { kind: "tcp", url: "redis://d:6379" });
+  assert.deepEqual(redisConfig({ STORAGE_REDIS_URL: "rediss://e" }), { kind: "tcp", url: "rediss://e" });
+  assert.equal(redisConfig({ PATH: "/bin" }), null);
+  assert.deepEqual(storageEnvNames({ KV_REST_API_URL: "x", PATH: "y", REDIS_URL: "z" }), ["KV_REST_API_URL", "REDIS_URL"]);
+});
 import { COMMON, addTask, initialState, moveTask, tasksOf, updateTask } from "../js/store.js";
 import { createSync } from "../js/sync.js";
 

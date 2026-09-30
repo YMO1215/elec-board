@@ -111,6 +111,25 @@ export function emptyTrash(state) {
   return { ...state, tasks: state.tasks.filter((t) => !t.deletedAt) };
 }
 
+export const TRASH_DAYS = 30; // trashed tasks are removed for good after this many days
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** ISO time before which a trashed task has expired, given "now" (ms). */
+export function trashCutoff(nowMs) {
+  return new Date(nowMs - TRASH_DAYS * DAY_MS).toISOString();
+}
+
+/** Remove trashed tasks deleted before `before` (ISO). The caller fixes `before` so a retried op is identical. */
+export function purgeTrash(state, before) {
+  if (!state.tasks.some((t) => t.deletedAt && t.deletedAt < before)) return state;
+  return { ...state, tasks: state.tasks.filter((t) => !(t.deletedAt && t.deletedAt < before)) };
+}
+
+/** Whole days left before a trashed task is removed (0 = goes on the next purge). */
+export function trashDaysLeft(deletedAt, nowMs) {
+  return Math.max(0, Math.ceil((Date.parse(deletedAt) + TRASH_DAYS * DAY_MS - nowMs) / DAY_MS));
+}
+
 export const MAX_COMMENTS = 100;
 
 /** Append a comment under a task. `id` and `at` are fixed by the caller so a retried op is identical. */

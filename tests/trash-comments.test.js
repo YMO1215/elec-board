@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import {
   COMMON, activeOf, addComment, addTask, doneOf, emptyTrash, initialState, moveTask, parse, removeComment,
-  restoreFromTrash, trashOf, trashTask, updateTask,
+  purgeTrash, restoreFromTrash, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
 } from "../js/store.js";
 
 const T1 = "2026-10-01T09:00:00.000Z";
@@ -48,6 +48,19 @@ test("emptying the trash removes only trashed tasks, permanently", () => {
   s = emptyTrash(s);
   assert.deepEqual(s.tasks.map((t) => t.id).sort(), ["a", "c"]);
   assert.equal(emptyTrash(s), s);
+});
+
+test("trash expires after 30 days", () => {
+  const now = Date.parse("2026-10-31T09:00:00.000Z");
+  const cutoff = trashCutoff(now);
+  assert.equal(cutoff, "2026-10-01T09:00:00.000Z");
+  let s = trashTask(trashTask(board(), "a", "2026-10-01T08:59:59.000Z"), "b", "2026-10-01T09:00:00.000Z");
+  s = purgeTrash(s, cutoff);
+  assert.deepEqual(s.tasks.map((t) => t.id).sort(), ["b", "c", "k"]); // exactly 30 days is kept until it passes
+  assert.equal(purgeTrash(s, cutoff), s);
+  assert.equal(trashDaysLeft("2026-10-01T09:00:00.000Z", now), 0);
+  assert.equal(trashDaysLeft("2026-10-30T09:00:00.000Z", now), 29);
+  assert.equal(trashDaysLeft("2026-10-31T09:00:00.000Z", now), 30);
 });
 
 test("comments: add, ignore duplicates and blanks, remove, survive moves and storage", () => {

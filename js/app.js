@@ -6,8 +6,8 @@ import { openCalendar } from "./calendar.js";
 import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
   COMMON, MAX_TEXT, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson,
-  activeOf, addComment, doneOf, emptyTrash, removeComment, restoreFromTrash, restoreTask, save, setNote, trashOf,
-  trashTask, updateTask,
+  activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
+  TRASH_DAYS, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
 } from "./store.js";
 import { POLL_MS, createSync } from "./sync.js";
 
@@ -513,7 +513,8 @@ function renderTrash() {
           avatar(o.cls, o.name, true),
           h("div", { class: "done-body" },
             h("p", { class: "done-text" }, t.text),
-            h("p", { class: "done-date" }, `${o.name} · ${d.getMonth() + 1}월 ${d.getDate()}일 삭제${t.done ? " · 완료했던 일" : ""}`)),
+            h("p", { class: "done-date" }, `${o.name} · ${d.getMonth() + 1}월 ${d.getDate()}일 삭제${t.done ? " · 완료했던 일" : ""}`),
+            h("p", { class: "trash-left" }, daysLeftLabel(trashDaysLeft(t.deletedAt, Date.now())))),
           h("div", { class: "done-actions" },
             h("button", { class: "text-btn", type: "button", "aria-label": `“${t.text}” 복구`,
               onClick: () => {
@@ -527,7 +528,19 @@ function renderTrash() {
               })));
       })))
     : h("div", { class: "done-card trash-card empty" }, h("p", { class: "done-empty" }, "휴지통이 비어 있어요. 지운 업무는 여기서 복구할 수 있어요."));
-  section.replaceChildren(header, list);
+  const note = h("p", { class: "trash-note" }, `휴지통의 업무는 ${TRASH_DAYS}일이 지나면 자동으로 영구 삭제돼요.`);
+  section.replaceChildren(header, note, list);
+}
+
+function daysLeftLabel(days) {
+  return days <= 1 ? "하루 안에 자동 삭제" : `${days}일 후 자동 삭제`;
+}
+
+/** Drop trashed tasks older than TRASH_DAYS. Runs at start and hourly; commits only when something expired. */
+function purgeExpiredTrash() {
+  const cutoff = trashCutoff(Date.now()); // fixed here so a retried op is identical
+  if (!state.tasks.some((t) => t.deletedAt && t.deletedAt < cutoff)) return;
+  commit((s) => purgeTrash(s, cutoff));
 }
 
 function renderDone() {
@@ -838,9 +851,13 @@ window.addEventListener("storage", (e) => {
   refresh();
 });
 
+const PURGE_MS = 60 * 60 * 1000; // re-check the trash for expired tasks every hour
+
 async function connect() {
   showStatus({ mode: "connecting", pending: 0 });
   const shared = await sync.start(local);
+  purgeExpiredTrash(); // after start, so a shared board is cleaned on the server copy, not the local one
+  setInterval(() => { if (!busy()) purgeExpiredTrash(); }, PURGE_MS);
   if (!shared) return;
   setInterval(() => { if (!document.hidden && !busy()) sync.poll(); }, POLL_MS);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) sync.poll(); });

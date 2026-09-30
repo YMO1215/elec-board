@@ -761,6 +761,8 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .back-btn .icon { margin-right: 0; }
 .trash-card { grid-column: 1 / -1; }
 .trash-card .done-date { color: var(--secondary-label); }
+.trash-note { grid-column: 1 / -1; margin: -6px 0 0; padding: 0 4px; color: var(--secondary-label); font-size: 13px; line-height: 18px; }
+.trash-left { margin: 0; font-size: 12px; line-height: 16px; color: var(--tertiary-label); font-variant-numeric: tabular-nums; }
 .danger { color: var(--destructive); }
 /* permanent actions take two taps: the first one arms the button (red, with a label) */
 .is-armed { background: var(--destructive) !important; color: #fff !important; }

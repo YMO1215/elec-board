@@ -379,6 +379,11 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 
 /* ---------------------------------------------------------------- cards (flat) */
 
+/* The app is a surface you click and drag, not a page you read: no text selection, so a click beside a card
+   can't plant a blinking caret in the nearest words (visible with caret browsing / after a double click). */
+body { -webkit-user-select: none; user-select: none; }
+input, textarea { -webkit-user-select: text; user-select: text; }
+
 .note {
   position: relative;
   display: grid;

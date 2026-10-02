@@ -561,10 +561,8 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 
 /* ---------------------------------------------------------------- disclosure + per-person lines (common tasks) */
 
-/* inside the card text, right after the last word (wrapped or not): 6px from the words, 6px between dots and chevron */
-.disclose-wrap { display: inline-flex; align-items: center; gap: 6px; margin: -6px 0 -6px 6px; vertical-align: middle; white-space: nowrap; font-weight: 400; cursor: default; }
-.disclose-wrap .disclose { cursor: pointer; }
-.note-text .tail { white-space: nowrap; }
+/* right edge of the card, first row: stays at the top however many lines the text wraps to */
+.disclose-wrap { grid-column: 3; grid-row: 1; align-self: start; display: inline-flex; align-items: center; gap: 6px; margin-left: 2px; }
 .disclose {
   position: relative;
   display: grid;

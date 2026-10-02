@@ -227,9 +227,8 @@ function flash(id) {
 function noteEl(task) {
   const cls = SHARED[task.owner]?.cls ?? task.owner;
   const text = h("p", { class: "note-text", tabindex: "0", title: "눌러서 고치기" }, task.text);
-  // shared-strip cards carry the dots + chevron inline at the end of the words; only the words open the editor
-  text.addEventListener("click", (e) => { if (!e.target.closest(".disclose-wrap")) startEdit(task.owner, task.id); });
-  text.addEventListener("keydown", (e) => { if (e.target === text && e.key === "Enter") { e.preventDefault(); startEdit(task.owner, task.id); } });
+  text.addEventListener("click", () => startEdit(task.owner, task.id));
+  text.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startEdit(task.owner, task.id); } });
   const magnet = h("button", {
     class: "magnet", type: "button",
     "aria-label": `자석: “${task.text}” 옮기기. 끌어서 붙이거나 방향키로 이동`,
@@ -237,17 +236,11 @@ function noteEl(task) {
   magnet.addEventListener("pointerdown", (e) => beginDrag(e, task.id));
   magnet.addEventListener("keydown", (e) => keyMove(e, task));
   const extra = task.owner === REGULAR ? assigneePicker(task) : SHARED[task.owner] ? personLines(task) : null; // 공통: one input line per person · 정기: pick the people in charge
-  if (extra) {
-    // flows right after the last word, so wrapped text never leaves a gap; the last (short) word is bound to it
-    // so the dots + chevron never sit alone on a line of their own
-    const [, head, last] = task.text.match(/^([\s\S]*?)(\S*)$/);
-    if (last && last.length <= 12) text.replaceChildren(head, h("span", { class: "tail" }, last, extra.button));
-    else text.append(extra.button);
-  }
   const nComments = (task.comments ?? []).length;
   return h("article", { class: `note ${cls}`, dataset: { id: task.id } },
     magnet,
     text,
+    extra?.button, // pinned to the card's right edge on the first line, however the text wraps
     commentsEl(task),
     h("div", { class: "note-tools" },
       h("button", { class: "tool is-done", type: "button", "aria-label": `“${task.text}” 완료`, onClick: (e) => complete(task, e.currentTarget) }, icon("check")),

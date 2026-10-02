@@ -398,6 +398,9 @@ input, textarea { -webkit-user-select: text; user-select: text; }
   touch-action: pan-y;
   transition: transform var(--snap) var(--ease), box-shadow var(--snap) var(--ease), background-color 0.2s var(--ease);
 }
+/* shared-strip cards: the assignee dots + chevron sit right after the words (same 6px as dots-to-chevron),
+   not pinned to the far edge — the 1fr filler takes the leftover width */
+.note:has(.disclose-wrap) { grid-template-columns: 28px minmax(0, auto) auto minmax(0, 1fr); }
 .note::before { /* the one place a person's colour lives on a card: a narrow status bar */
   content: "";
   position: absolute;

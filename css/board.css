@@ -604,6 +604,29 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 }
 .note-line-input::placeholder { color: var(--tertiary-label); }
 
+/* 정기 업무: people picker (same slot as the per-person lines) */
+.mini-dots.assignees .avatar + .avatar { margin-left: -4px; box-shadow: 0 0 0 1.5px var(--system-background); }
+.assign-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0.5px solid var(--separator);
+  border-radius: var(--r-control);
+  background: var(--secondary-background);
+  color: var(--label);
+  font: inherit;
+  font-size: 17px;
+  text-align: left;
+  transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.assign-row .row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assign-check { display: grid; color: var(--c); opacity: 0; transition: opacity 0.2s var(--ease); }
+.assign-row[aria-pressed="true"] { border-color: var(--c); background: color-mix(in srgb, var(--c) 10%, var(--secondary-background)); }
+.assign-row[aria-pressed="true"] .assign-check { opacity: 1; }
+
 /* ---------------------------------------------------------------- comments under a card */
 
 .note-comments {

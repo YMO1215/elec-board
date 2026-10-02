@@ -91,3 +91,17 @@ test("정기 업무 is a lane of its own next to the common one", async () => {
   // survives a save/load round trip (parse keeps the owner)
   assert.deepEqual(activeOf(parse(JSON.stringify(s)), REGULAR).map((t) => t.id), ["c1", "r1"]);
 });
+
+test("정기 업무 assignees: toggle people on and off, kept in people order", async () => {
+  const { REGULAR, setAssignee } = await import("../js/store.js");
+  let s = addTask(initialState(), REGULAR, "월간 점검", "r1");
+  s = setAssignee(s, "r1", "p3", true);
+  s = setAssignee(s, "r1", "p1", true);
+  assert.deepEqual(s.tasks[0].assignees, ["p1", "p3"]);
+  assert.equal(setAssignee(s, "r1", "p1", true), s); // no-op keeps identity
+  assert.equal(setAssignee(s, "r1", "zz", true), s);
+  s = setAssignee(s, "r1", "p1", false);
+  assert.deepEqual(s.tasks[0].assignees, ["p3"]);
+  assert.deepEqual(parse(JSON.stringify(s)).tasks[0].assignees, ["p3"]);
+  assert.deepEqual(parse(JSON.stringify({ ...s, tasks: [{ ...s.tasks[0], assignees: ["p2", "x", "p2"] }] })).tasks[0].assignees, ["p2"]);
+});

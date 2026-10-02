@@ -95,6 +95,17 @@ export function setNote(state, id, personId, text) {
   return { ...state, tasks: state.tasks.map((t) => (t.id === id ? { ...t, notes } : t)) };
 }
 
+/** 정기 업무: switch one person on/off as an assignee of a task (ids kept in people order). */
+export function setAssignee(state, id, personId, on) {
+  if (!state.people.some((p) => p.id === personId)) return state;
+  const task = state.tasks.find((t) => t.id === id);
+  if (!task) return state;
+  const has = (task.assignees ?? []).includes(personId);
+  if (has === Boolean(on)) return state;
+  const assignees = state.people.map((p) => p.id).filter((pid) => (pid === personId ? Boolean(on) : (task.assignees ?? []).includes(pid)));
+  return { ...state, tasks: state.tasks.map((t) => (t.id === id ? { ...t, assignees } : t)) };
+}
+
 /** Delete = move to the trash (recoverable). `at` is an ISO timestamp fixed by the caller. */
 export function trashTask(state, id, at) {
   if (!state.tasks.some((t) => t.id === id && !t.deletedAt)) return state;
@@ -183,6 +194,10 @@ function cleanNotes(raw, people) {
   return out;
 }
 
+function cleanAssignees(raw, people) {
+  return Array.isArray(raw) ? people.map((p) => p.id).filter((id) => raw.includes(id)) : [];
+}
+
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/;
 
 function cleanComments(raw) {
@@ -208,6 +223,7 @@ export function parse(raw) {
         id: t.id, text: cleanText(t.text), owner: t.owner, done: Boolean(t.done),
         doneAt: t.done && /^\d{4}-\d{2}-\d{2}$/.test(t.doneAt) ? t.doneAt : null,
         notes: cleanNotes(t.notes, people),
+        assignees: cleanAssignees(t.assignees, people),
         comments: cleanComments(t.comments),
         deletedAt: typeof t.deletedAt === "string" && ISO_TIME.test(t.deletedAt) ? t.deletedAt : null,
       }));

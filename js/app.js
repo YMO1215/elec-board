@@ -5,7 +5,7 @@ import { icon } from "./icons.js";
 import { openCalendar } from "./calendar.js";
 import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
-  COMMON, MAX_TEXT, REGULAR, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson,
+  COMMON, MAX_TEXT, REGULAR, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee,
   activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
   TRASH_DAYS, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
 } from "./store.js";
@@ -235,7 +235,7 @@ function noteEl(task) {
   });
   magnet.addEventListener("pointerdown", (e) => beginDrag(e, task.id));
   magnet.addEventListener("keydown", (e) => keyMove(e, task));
-  const extra = SHARED[task.owner] ? personLines(task) : null; // shared-strip tasks: one input line per person
+  const extra = task.owner === REGULAR ? assigneePicker(task) : SHARED[task.owner] ? personLines(task) : null; // 공통: one input line per person · 정기: pick the people in charge
   const nComments = (task.comments ?? []).length;
   return h("article", { class: `note ${cls}`, dataset: { id: task.id } },
     magnet,
@@ -364,9 +364,14 @@ function personLines(task) {
     }));
   panel.hidden = !openLines.has(task.id);
 
+  return { button: discloseButton(task, panel, dots, "담당자별 입력", "input"), panel };
+}
+
+/** The chevron beside a shared-strip card: opens `panel`; the `dots` summary shows only while it is closed. */
+function discloseButton(task, panel, dots, label, focusSelector) {
   const button = h("button", {
-    class: "disclose", type: "button", "aria-label": "담당자별 입력", "aria-expanded": String(openLines.has(task.id)),
-    "aria-controls": panelId,
+    class: "disclose", type: "button", "aria-label": label, "aria-expanded": String(openLines.has(task.id)),
+    "aria-controls": panel.id,
   }, icon("chevron-down"));
   button.addEventListener("click", () => {
     const open = panel.hidden;
@@ -375,13 +380,37 @@ function personLines(task) {
     if (open) {
       dots.hidden = true; // the dots only summarise a closed note
       toggleHeight(panel, true);
-      panel.querySelector("input")?.focus({ preventScroll: true });
+      panel.querySelector(focusSelector)?.focus({ preventScroll: true });
     } else {
       toggleHeight(panel, false, () => { dots.hidden = false; });
     }
   });
   dots.hidden = openLines.has(task.id);
-  return { button: h("span", { class: "disclose-wrap" }, dots, button), panel };
+  return h("span", { class: "disclose-wrap" }, dots, button);
+}
+
+/** 정기 업무: the chevron opens the four people (by their header names); each toggles as an assignee. */
+function assigneePicker(task) {
+  const panelId = `lines-${task.id}`;
+  const chosen = () => state.tasks.find((t) => t.id === task.id)?.assignees ?? [];
+  const dots = h("span", { class: "mini-dots assignees", "aria-hidden": "true" });
+  const paintDots = () => dots.replaceChildren(...state.people.filter((p) => chosen().includes(p.id)).map((p) => avatar(p.id, p.name, true)));
+  paintDots();
+
+  const panel = h("div", { class: "note-lines assign-list", id: panelId, role: "group", "aria-label": "담당자 지정" },
+    state.people.map((p) => {
+      const row = h("button", { class: `assign-row ${p.id}`, type: "button", "aria-pressed": String(chosen().includes(p.id)) },
+        avatar(p.id, p.name, true), h("span", { class: "row-name" }, p.name), h("span", { class: "assign-check" }, icon("check", 16)));
+      row.addEventListener("click", () => {
+        const on = row.getAttribute("aria-pressed") !== "true";
+        commit((s) => setAssignee(s, task.id, p.id, on), { silent: true }); // already on screen: no redraw
+        row.setAttribute("aria-pressed", String(on));
+        paintDots();
+      });
+      return row;
+    }));
+  panel.hidden = !openLines.has(task.id);
+  return { button: discloseButton(task, panel, dots, "담당자 지정", ".assign-row"), panel };
 }
 
 // When typing ends, draw whatever arrived from teammates in the meantime.

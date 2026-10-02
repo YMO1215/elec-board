@@ -398,9 +398,6 @@ input, textarea { -webkit-user-select: text; user-select: text; }
   touch-action: pan-y;
   transition: transform var(--snap) var(--ease), box-shadow var(--snap) var(--ease), background-color 0.2s var(--ease);
 }
-/* shared-strip cards: the assignee dots + chevron sit right after the words (same 6px as dots-to-chevron),
-   not pinned to the far edge — the 1fr filler takes the leftover width */
-.note:has(.disclose-wrap) { grid-template-columns: 28px minmax(0, auto) auto minmax(0, 1fr); }
 .note::before { /* the one place a person's colour lives on a card: a narrow status bar */
   content: "";
   position: absolute;
@@ -564,7 +561,10 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 
 /* ---------------------------------------------------------------- disclosure + per-person lines (common tasks) */
 
-.disclose-wrap { grid-column: 3; grid-row: 1; display: inline-flex; align-items: center; gap: 6px; margin-left: 2px; }
+/* inside the card text, right after the last word (wrapped or not): 6px from the words, 6px between dots and chevron */
+.disclose-wrap { display: inline-flex; align-items: center; gap: 6px; margin: -6px 0 -6px 6px; vertical-align: middle; white-space: nowrap; font-weight: 400; cursor: default; }
+.disclose-wrap .disclose { cursor: pointer; }
+.note-text .tail { white-space: nowrap; }
 .disclose {
   position: relative;
   display: grid;
@@ -585,7 +585,7 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .disclose:hover { color: var(--label); }
 .disclose:active { transform: scale(0.97); }
 .mini-dots { display: inline-flex; align-items: center; gap: 3px; }
-.mini-dots[hidden] { display: none; }
+.mini-dots[hidden], .mini-dots:empty { display: none; }
 .mini-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
 
 .note-lines {

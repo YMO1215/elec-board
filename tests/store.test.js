@@ -77,3 +77,17 @@ test("stored data is parsed defensively", () => {
   assert.equal(back.tasks.some((t) => t.id === "bad"), false);
   assert.deepEqual(ids(back, "p1"), ["a", "b", "c"]);
 });
+
+test("정기 업무 is a lane of its own next to the common one", async () => {
+  const { REGULAR, activeOf, owners } = await import("../js/store.js");
+  assert.deepEqual(owners(initialState()).slice(-2), [COMMON, REGULAR]);
+  let s = addTask(initialState(), REGULAR, "월간 점검", "r1");
+  s = addTask(s, COMMON, "공통", "c1");
+  assert.deepEqual(activeOf(s, REGULAR).map((t) => t.id), ["r1"]);
+  assert.deepEqual(activeOf(s, COMMON).map((t) => t.id), ["c1"]);
+  s = moveTask(s, "c1", REGULAR, 0);
+  assert.deepEqual(activeOf(s, REGULAR).map((t) => t.id), ["c1", "r1"]);
+  assert.deepEqual(activeOf(s, COMMON), []);
+  // survives a save/load round trip (parse keeps the owner)
+  assert.deepEqual(activeOf(parse(JSON.stringify(s)), REGULAR).map((t) => t.id), ["c1", "r1"]);
+});

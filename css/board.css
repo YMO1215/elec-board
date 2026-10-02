@@ -30,6 +30,7 @@
   --p3: #34c759;
   --p4: #ff9500;
   --pc: #5856d6;
+  --pr: #30b0c7;
 
   /* liquid glass (top bar, toast) */
   --glass: rgba(245, 245, 247, 0.72);
@@ -69,6 +70,7 @@
     --p3: #30d158;
     --p4: #ff9f0a;
     --pc: #5e5ce6;
+    --pr: #40c8e0;
     --glass: rgba(28, 28, 30, 0.72);
     --glass-highlight: rgba(255, 255, 255, 0.14);
     --hud: rgba(58, 58, 60, 0.86);
@@ -104,6 +106,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .p3 { --c: var(--p3); }
 .p4 { --c: var(--p4); }
 .common, .pc { --c: var(--pc); }
+.regular, .pr { --c: var(--pr); }
 
 /* ---------------------------------------------------------------- avatar */
 
@@ -695,8 +698,10 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 
 /* ---------------------------------------------------------------- common strip */
 
+/* the strip is two half-width cards: 공통 업무 (left) + 정기 업무 (right) */
+.shared { margin-top: var(--gap); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); align-items: start; }
 .common {
-  margin-top: var(--gap);
+  min-width: 0;
   padding: 16px 12px 12px;
   border-radius: var(--r-lane);
   background: var(--secondary-background);
@@ -706,7 +711,7 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .common-head p { margin: 0; flex: 1; min-width: 0; font-size: 13px; line-height: 18px; color: var(--secondary-label); }
 .common .drop {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: start;
   align-items: start; /* an opened card grows on its own instead of stretching its neighbours */
   gap: 8px;
@@ -952,7 +957,7 @@ dialog.is-closing::backdrop { animation: fade-out 0.22s var(--ease) forwards; }
 @media (max-width: 960px) {
   .lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lane { min-height: 240px; }
-  .common .drop { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .common .drop { grid-template-columns: minmax(0, 1fr); }
   .done-view { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 620px) {
@@ -962,7 +967,7 @@ dialog.is-closing::backdrop { animation: fade-out 0.22s var(--ease) forwards; }
   .collapse { display: grid; }
   .lane.is-collapsed .drop { display: none; }
   .lane.is-collapsed .lane-head { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
-  .common .drop { grid-template-columns: minmax(0, 1fr); }
+  .shared { grid-template-columns: minmax(0, 1fr); }
   .date-btn { font-size: 24px; line-height: 30px; }
   .date-btn::before { inset: -7px 0; }
   dialog.sheet { width: 100%; max-width: 100%; margin: auto 0 0; border-radius: var(--r-sheet) var(--r-sheet) 0 0; }

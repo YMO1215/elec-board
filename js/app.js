@@ -5,7 +5,7 @@ import { icon } from "./icons.js";
 import { openCalendar } from "./calendar.js";
 import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
-  COMMON, MAX_TEXT, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson,
+  COMMON, MAX_TEXT, REGULAR, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson,
   activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
   TRASH_DAYS, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
 } from "./store.js";
@@ -113,8 +113,18 @@ function todayIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// The two halves of the shared strip: 공통 업무 (left) and 정기 업무 (right).
+const SHARED = {
+  [COMMON]: { cls: "pc", name: "공통 업무", sub: "모두의 일", hint: "함께 할 일을 여기로 끌어 놓으세요", add: "공통 업무 추가", short: "공통" },
+  [REGULAR]: { cls: "pr", name: "정기 업무", sub: "반복되는 일", hint: "정기적으로 할 일을 여기로 끌어 놓으세요", add: "정기 업무 추가", short: "정기" },
+};
+
+function sharedTargets() {
+  return [COMMON, REGULAR].map((id) => ({ id, cls: SHARED[id].cls, name: SHARED[id].name }));
+}
+
 function ownerName(owner) {
-  return owner === COMMON ? "공통 업무" : state.people.find((p) => p.id === owner)?.name ?? "";
+  return SHARED[owner]?.name ?? state.people.find((p) => p.id === owner)?.name ?? "";
 }
 
 let toastTimer;
@@ -215,7 +225,7 @@ function flash(id) {
 // ---------------------------------------------------------------- render
 
 function noteEl(task) {
-  const cls = task.owner === COMMON ? "pc" : task.owner;
+  const cls = SHARED[task.owner]?.cls ?? task.owner;
   const text = h("p", { class: "note-text", tabindex: "0", title: "눌러서 고치기" }, task.text);
   text.addEventListener("click", () => startEdit(task.owner, task.id));
   text.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startEdit(task.owner, task.id); } });
@@ -225,7 +235,7 @@ function noteEl(task) {
   });
   magnet.addEventListener("pointerdown", (e) => beginDrag(e, task.id));
   magnet.addEventListener("keydown", (e) => keyMove(e, task));
-  const extra = task.owner === COMMON ? personLines(task) : null; // common tasks: one input line per person
+  const extra = SHARED[task.owner] ? personLines(task) : null; // shared-strip tasks: one input line per person
   const nComments = (task.comments ?? []).length;
   return h("article", { class: `note ${cls}`, dataset: { id: task.id } },
     magnet,
@@ -251,7 +261,7 @@ function avatar(cls, name, small = false) {
 
 /** Tap-to-move path for touch screens (dragging stays available): a sheet with the four people + common. */
 function openMoveSheet(task) {
-  const targets = [...state.people.map((p) => ({ id: p.id, cls: p.id, name: p.name })), { id: COMMON, cls: "pc", name: "공통 업무" }];
+  const targets = [...state.people.map((p) => ({ id: p.id, cls: p.id, name: p.name })), ...sharedTargets()];
   const dialog = h("dialog", { class: "sheet", "aria-label": "다른 담당자로 이동" });
   const close = () => animateClose(dialog);
   dialog.append(h("div", { class: "sheet-inner" },
@@ -268,7 +278,7 @@ function openMoveSheet(task) {
           commit((s) => moveTask(s, task.id, t.id, 0));
           flash(task.id);
           navigator.vibrate?.(10);
-          toast(t.id === COMMON ? "공통 업무에 붙였어요" : `${t.name}에게 붙였어요`);
+          toast(SHARED[t.id] ? `${t.name}에 붙였어요` : `${t.name}에게 붙였어요`);
         },
       }, avatar(t.cls, t.name), h("span", { class: "row-name" }, t.name),
       here ? icon("check") : h("span", { class: "row-meta" }, `${activeOf(state, t.id).length}건`));
@@ -381,7 +391,7 @@ document.addEventListener("focusout", (e) => {
 });
 
 function editorEl(owner, task) {
-  const cls = owner === COMMON ? "pc" : owner;
+  const cls = SHARED[owner]?.cls ?? owner;
   const area = h("textarea", { class: "editor", maxlength: MAX_TEXT, rows: "2", "aria-label": `${ownerName(owner)} 업무 내용`,
     placeholder: "무슨 일인가요?" });
   area.value = task ? task.text : "";
@@ -430,7 +440,7 @@ function dropZone(owner, layout) {
     zone.append(el);
   }
   if (!tasks.length && !(editing && editing.owner === owner)) {
-    zone.append(h("p", { class: "hint" }, owner === COMMON ? "함께 할 일을 여기로 끌어 놓으세요" : "+ 를 눌러 업무 추가"));
+    zone.append(h("p", { class: "hint" }, SHARED[owner]?.hint ?? "+ 를 눌러 업무 추가"));
   }
   return zone;
 }
@@ -489,7 +499,7 @@ function armed(button, label, run) {
 }
 
 function ownerOf(id) {
-  return id === COMMON ? { cls: "pc", name: "공통 업무" } : { cls: id, name: state.people.find((p) => p.id === id)?.name ?? "" };
+  return SHARED[id] ? { cls: SHARED[id].cls, name: SHARED[id].name } : { cls: id, name: state.people.find((p) => p.id === id)?.name ?? "" };
 }
 
 function renderTrash() {
@@ -546,7 +556,7 @@ function purgeExpiredTrash() {
 function renderDone() {
   const doneTasks = doneOf(state);
   const section = document.getElementById("done");
-  const cards = [...state.people.map((p) => ({ id: p.id, cls: p.id, name: p.name })), { id: COMMON, cls: "pc", name: "공통 업무" }]
+  const cards = [...state.people.map((p) => ({ id: p.id, cls: p.id, name: p.name })), ...sharedTargets()]
     .map((o) => {
       // Most recently completed first; tasks finished before dates were recorded go last.
       const rows = doneTasks.filter((t) => t.owner === o.id)
@@ -627,17 +637,20 @@ function render() {
     return lane;
   }));
 
-  const nCommon = activeOf(state, COMMON).length;
-  const commonCount = h("span", { class: "count" }, String(nCommon));
-  setCount(commonCount, COMMON, nCommon);
-  document.getElementById("common-head").replaceChildren(
-    h("header", { class: "common-head" },
-      avatar("pc", "공통"),
-      h("h2", { id: "common-title" }, "공통 업무"),
-      h("p", {}, "모두의 일"),
-      commonCount,
-      h("button", { class: "icon-btn add", type: "button", "aria-label": "공통 업무 추가", onClick: () => startEdit(COMMON, null) }, icon("plus"))));
-  document.getElementById("common-drop").replaceChildren(dropZone(COMMON, "wrap"));
+  for (const id of [COMMON, REGULAR]) {
+    const meta = SHARED[id];
+    const n = activeOf(state, id).length;
+    const count = h("span", { class: "count" }, String(n));
+    setCount(count, id, n);
+    document.getElementById(`${id}-head`).replaceChildren(
+      h("header", { class: "common-head" },
+        avatar(meta.cls, meta.short),
+        h("h2", { id: `${id}-title` }, meta.name),
+        h("p", {}, meta.sub),
+        count,
+        h("button", { class: "icon-btn add", type: "button", "aria-label": meta.add, onClick: () => startEdit(id, null) }, icon("plus"))));
+    document.getElementById(`${id}-drop`).replaceChildren(dropZone(id, "wrap"));
+  }
   firstPaint = false;
 
   // Focus synchronously: keystrokes typed right after tapping + must not be lost.

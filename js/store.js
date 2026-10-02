@@ -3,6 +3,7 @@
 
 export const STORAGE_KEY = "magnet-board:v1";
 export const COMMON = "common";
+export const REGULAR = "regular"; // 정기 업무 — the right half of the shared strip
 export const MAX_TEXT = 200;
 
 const DEFAULT_PEOPLE = [
@@ -17,7 +18,7 @@ export function initialState() {
 }
 
 export function owners(state) {
-  return [...state.people.map((p) => p.id), COMMON];
+  return [...state.people.map((p) => p.id), COMMON, REGULAR];
 }
 
 export function tasksOf(state, owner) {
@@ -200,7 +201,7 @@ export function parse(raw) {
       return initialState();
     }
     const people = data.people.map((p, i) => ({ id: DEFAULT_PEOPLE[i].id, name: cleanText(p.name).slice(0, 20) || DEFAULT_PEOPLE[i].name }));
-    const valid = new Set([...people.map((p) => p.id), COMMON]);
+    const valid = new Set([...people.map((p) => p.id), COMMON, REGULAR]);
     const tasks = data.tasks
       .filter((t) => t && typeof t.id === "string" && valid.has(t.owner) && cleanText(t.text))
       .map((t) => ({

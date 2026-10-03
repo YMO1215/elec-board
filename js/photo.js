@@ -59,6 +59,30 @@ export function photoSrc(url, key = null) {
   return `api/photo?u=${encodeURIComponent(url)}${key ? `&key=${encodeURIComponent(key)}` : ""}`;
 }
 
+/** A string safe to use as a downloaded file's name. */
+export function fileSafe(name, fallback = "사진") {
+  return String(name ?? "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim().slice(0, 60) || fallback;
+}
+
+/** Fetch one stored photo as a Blob (through our own domain). */
+export async function fetchPhoto(url, key = null) {
+  const res = await fetch(photoSrc(url, key));
+  if (!res.ok) throw new Error(`사진을 가져오지 못했어요 (${res.status})`);
+  return res.blob();
+}
+
+/** Hand a Blob to the browser as a download. */
+export function saveBlob(blob, filename) {
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 10000);
+}
+
 /** Upload a shrunk Blob into the task's folder; resolves to the public URL. */
 export async function uploadPhoto(blob, { folder, name, key = null, fetchImpl = (...a) => fetch(...a) }) {
   const res = await fetchImpl(endpoint({ folder, name }, key), {

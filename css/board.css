@@ -699,7 +699,9 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .folder > summary .icon-chevron-down { transition: transform 0.25s var(--ease); }
 .folder[open] > summary .icon-chevron-down { transform: rotate(180deg); }
 .folder-body { display: grid; gap: 10px; padding: 2px 12px 12px; }
-.folder-add { justify-self: start; min-height: 44px; }
+.folder-actions { display: flex; align-items: center; gap: 4px; }
+.folder-actions .text-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; white-space: nowrap; } /* icon and label on one row */
+.folder-actions .text-btn .icon { margin-right: 0; vertical-align: baseline; }
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px 8px; }
 .photo-cell { display: grid; gap: 4px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; text-align: left; }
 .photo-cell img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border: 0.5px solid var(--separator); border-radius: var(--r-control); background: var(--fill); }

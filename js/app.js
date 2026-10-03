@@ -11,7 +11,8 @@ import {
   TRASH_DAYS, removePhoto, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
 } from "./store.js";
 import { POLL_MS, createSync } from "./sync.js";
-import { deletePhotoFiles, photoName, photoSrc, shrinkPhoto, uploadPhoto } from "./photo.js";
+import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
+import { makeZip } from "./zip.js";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const DRAG_THRESHOLD = 3;
@@ -278,6 +279,32 @@ function openAlbum() {
   dialog.showModal();
 }
 
+/** All of a folder's photos as one zip (named by shooting time inside). */
+async function downloadFolder(task) {
+  const photos = task.photos ?? [];
+  if (!photos.length) return;
+  toast(`사진 ${photos.length}장 묶는 중…`);
+  try {
+    const files = [];
+    for (const p of photos) {
+      files.push({ name: `${fileSafe(p.name)}.jpg`, data: new Uint8Array(await (await fetchPhoto(p.url, boardKey)).arrayBuffer()) });
+    }
+    saveBlob(new Blob([makeZip(files)], { type: "application/zip" }), `${fileSafe(task.text, "사진첩")}.zip`);
+    toast(`사진 ${photos.length}장을 내려받았어요`);
+  } catch (err) {
+    toast(`내려받지 못했어요 — ${err.message}`);
+  }
+}
+
+/** One photo as a .jpg named by its shooting time. */
+async function downloadPhoto(photo) {
+  try {
+    saveBlob(await fetchPhoto(photo.url, boardKey), `${fileSafe(photo.name)}.jpg`);
+  } catch (err) {
+    toast(`내려받지 못했어요 — ${err.message}`);
+  }
+}
+
 const SWIPE_W = 88; // width of the 삭제 button a right-to-left swipe reveals
 let swipedClose = null; // closes the one folder row that is currently swiped open
 
@@ -374,8 +401,13 @@ function folderEl(task) {
       h("span", { class: "count" }, String(photos.length)),
       icon("chevron-down", 16)),
     h("div", { class: "folder-body" },
-      h("button", { class: "text-btn folder-add", type: "button", "aria-label": `“${task.text}” 폴더에 사진 추가`, onClick: () => pickPhotos(task.id) },
-        icon("camera", 16), "사진 추가"),
+      h("div", { class: "folder-actions" },
+        h("button", { class: "text-btn", type: "button", "aria-label": `“${task.text}” 폴더에 사진 추가`, onClick: () => pickPhotos(task.id) },
+          icon("camera", 16), "사진 추가"),
+        photos.length
+          ? h("button", { class: "text-btn", type: "button", "aria-label": `“${task.text}” 폴더 사진 ${photos.length}장 모두 내려받기`, onClick: () => downloadFolder(task) },
+            icon("download", 16), "전체 다운")
+          : null),
       photos.length
         ? h("div", { class: "photo-grid", role: "list" }, photos.map((p) => h("button", {
           class: "photo-cell", type: "button", role: "listitem", "aria-label": `사진 ${p.name} 크게 보기`, onClick: () => openPhoto(task.id, p.id),
@@ -446,6 +478,7 @@ function openPhoto(taskId, photoId) {
         toast("사진을 지웠어요");
       }),
       h("p", { class: "photo-name" }, photo.name),
+      h("button", { class: "icon-btn", type: "button", "aria-label": "사진 내려받기", onClick: () => downloadPhoto(photo) }, icon("download")),
       h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: close }, icon("x")))));
   wireDialog(dialog);
   dialog.addEventListener("close", () => dialog.remove());

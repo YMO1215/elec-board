@@ -160,6 +160,72 @@ export function removeComment(state, taskId, commentId) {
   return { ...state, tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, comments } : t)) };
 }
 
+export const MAX_PHOTOS = 10;
+const PHOTO_HOST = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\//;
+
+export const PHOTO_MONTHS = 6; // a photo is removed this many months after it was uploaded
+export const DONE_FOLDER_DAYS = 30; // a completed task's photo folder is removed this many days after completion
+
+function cleanPhotoName(name) {
+  return String(name ?? "").trim().slice(0, 40) || "사진";
+}
+
+/** Attach an uploaded photo (a Vercel Blob URL) to a task. `id`, `at` (upload time) and `name` (shooting time) are fixed by the caller so a retried op is identical. */
+export function addPhoto(state, taskId, photo) {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task || !photo || !PHOTO_HOST.test(photo.url ?? "") || (task.photos ?? []).some((p) => p.id === photo.id)) return state;
+  if ((task.photos ?? []).length >= MAX_PHOTOS) return state;
+  const photos = [...(task.photos ?? []), { id: photo.id, url: photo.url, at: photo.at, name: cleanPhotoName(photo.name) }];
+  return { ...state, tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, photos } : t)) };
+}
+
+/** ISO time before which an uploaded photo has expired, given "now" (ms). */
+export function photoCutoff(nowMs) {
+  const d = new Date(nowMs);
+  d.setMonth(d.getMonth() - PHOTO_MONTHS);
+  return d.toISOString();
+}
+
+/** Local date (YYYY-MM-DD) on or before which a completed task's folder has expired, given "now" (ms). */
+export function doneFolderCutoff(nowMs) {
+  const d = new Date(nowMs - DONE_FOLDER_DAYS * DAY_MS);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Whole days left before a completed task's photos are removed (0 = on the next sweep). */
+export function doneFolderDaysLeft(doneAt, nowMs) {
+  return Math.max(0, Math.ceil((Date.parse(`${doneAt}T00:00:00`) + DONE_FOLDER_DAYS * DAY_MS - nowMs) / DAY_MS));
+}
+
+/** Photos that must go: older than `photoBefore` (ISO), or in the folder of a task completed on/before `doneBefore` (date). */
+export function expiredPhotos(state, photoBefore, doneBefore) {
+  const out = [];
+  for (const t of state.tasks) {
+    const folderGone = t.done && t.doneAt && t.doneAt <= doneBefore;
+    for (const p of t.photos ?? []) if (folderGone || p.at < photoBefore) out.push({ taskId: t.id, id: p.id, url: p.url });
+  }
+  return out;
+}
+
+/** Remove these photo ids (any task). Used after their files were deleted from Blob. */
+export function dropPhotos(state, ids) {
+  const gone = new Set(ids);
+  if (!state.tasks.some((t) => (t.photos ?? []).some((p) => gone.has(p.id)))) return state;
+  return { ...state, tasks: state.tasks.map((t) => ((t.photos ?? []).some((p) => gone.has(p.id)) ? { ...t, photos: t.photos.filter((p) => !gone.has(p.id)) } : t)) };
+}
+
+/** Blob URLs of every photo on these tasks (for tasks that are being deleted for good). */
+export function photoUrlsOf(tasks) {
+  return tasks.flatMap((t) => (t.photos ?? []).map((p) => p.url));
+}
+
+export function removePhoto(state, taskId, photoId) {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task || !(task.photos ?? []).some((p) => p.id === photoId)) return state;
+  const photos = task.photos.filter((p) => p.id !== photoId);
+  return { ...state, tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, photos } : t)) };
+}
+
 export function removeTask(state, id) {
   const index = state.tasks.findIndex((t) => t.id === id);
   if (index === -1) return { state, removed: null };
@@ -208,6 +274,14 @@ function cleanComments(raw) {
     .slice(-MAX_COMMENTS);
 }
 
+function cleanPhotos(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((p) => p && typeof p.id === "string" && typeof p.url === "string" && PHOTO_HOST.test(p.url) && typeof p.at === "string" && ISO_TIME.test(p.at))
+    .map((p) => ({ id: p.id, url: p.url, at: p.at, name: cleanPhotoName(p.name) }))
+    .slice(0, MAX_PHOTOS);
+}
+
 /** Parse stored JSON defensively: anything malformed falls back to a fresh board. */
 export function parse(raw) {
   try {
@@ -225,6 +299,7 @@ export function parse(raw) {
         notes: cleanNotes(t.notes, people),
         assignees: cleanAssignees(t.assignees, people),
         comments: cleanComments(t.comments),
+        photos: cleanPhotos(t.photos),
         deletedAt: typeof t.deletedAt === "string" && ISO_TIME.test(t.deletedAt) ? t.deletedAt : null,
       }));
     return { version: 1, people, tasks };

@@ -5,11 +5,13 @@ import { icon } from "./icons.js";
 import { openCalendar } from "./calendar.js";
 import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
-  COMMON, MAX_TEXT, REGULAR, STORAGE_KEY, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee,
+  COMMON, MAX_PHOTOS, MAX_TEXT, REGULAR, STORAGE_KEY, addPhoto, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee,
   activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
-  TRASH_DAYS, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
+  DONE_FOLDER_DAYS, PHOTO_MONTHS, doneFolderCutoff, doneFolderDaysLeft, dropPhotos, expiredPhotos, photoCutoff, photoUrlsOf,
+  TRASH_DAYS, removePhoto, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
 } from "./store.js";
 import { POLL_MS, createSync } from "./sync.js";
+import { deletePhotoFiles, photoName, shrinkPhoto, uploadPhoto } from "./photo.js";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const DRAG_THRESHOLD = 3;
@@ -47,7 +49,8 @@ function readKey() {
   return storage.getItem(KEY_STORAGE);
 }
 
-const sync = createSync({ key: readKey(), onChange: () => refresh(), onStatus: showStatus });
+const boardKey = readKey();
+const sync = createSync({ key: boardKey, onChange: () => refresh(), onStatus: showStatus });
 
 const typingInNote = () => ["note-line-input", "comment-input"].some((c) => document.activeElement?.classList?.contains(c));
 let quiet = false; // a change whose result is already on screen (the user just typed it): don't redraw
@@ -215,6 +218,158 @@ function commentsEl(task) {
         },
       }, icon("x", 14)))),
     composer);
+}
+
+// ---------------------------------------------------------------- photos on a card
+
+const taskOf = (id) => state.tasks.find((t) => t.id === id);
+
+const photoPicker = h("input", { type: "file", accept: "image/*", multiple: true, hidden: true, "aria-hidden": "true", tabindex: "-1" });
+let pickFor = null; // card the next picked photos belong to
+photoPicker.addEventListener("change", () => {
+  const files = [...photoPicker.files];
+  photoPicker.value = ""; // picking the same photo again must fire change again
+  if (pickFor && files.length) addPhotos(pickFor, files);
+});
+document.body.append(photoPicker);
+
+function pickPhotos(taskId) {
+  if ((taskOf(taskId)?.photos ?? []).length >= MAX_PHOTOS) {
+    toast(`사진은 카드마다 ${MAX_PHOTOS}장까지예요`);
+    return;
+  }
+  pickFor = taskId;
+  photoPicker.click();
+}
+
+/** Shrink (640px, q0.5) -> upload -> attach the URL. One at a time; a failure stops the rest with a message. */
+async function addPhotos(taskId, files) {
+  let added = 0;
+  for (const file of files) {
+    if ((taskOf(taskId)?.photos ?? []).length >= MAX_PHOTOS) { toast(`사진은 카드마다 ${MAX_PHOTOS}장까지예요`); break; }
+    toast(files.length > 1 ? `사진 올리는 중… ${added + 1}/${files.length}` : "사진 올리는 중…");
+    try {
+      const name = await photoName(file); // shooting time, read from the original before the resize drops EXIF
+      const url = await uploadPhoto(await shrinkPhoto(file), { folder: taskId, name, key: boardKey });
+      const photo = { id: newId(), url, at: new Date().toISOString(), name }; // fixed outside the op so a retried op is identical
+      commit((s) => addPhoto(s, taskId, photo));
+      added += 1;
+    } catch (err) {
+      toast(`사진을 올리지 못했어요 — ${err.message}`);
+      return;
+    }
+  }
+  if (added) toast(added > 1 ? `사진 ${added}장을 붙였어요` : "사진을 붙였어요");
+}
+
+// The album (사진첩): one folder per task (card name). Photos are named by shooting time.
+
+const openFolders = new Set(); // folders left open (per session)
+let albumDialog = null;
+
+function openAlbum() {
+  if (albumDialog) return;
+  const dialog = h("dialog", { class: "cal album", "aria-label": "사진첩" });
+  albumDialog = dialog;
+  wireDialog(dialog);
+  dialog.addEventListener("close", () => { albumDialog = null; dialog.remove(); });
+  document.body.append(dialog);
+  fillAlbum();
+  dialog.showModal();
+}
+
+/** Active cards first (board order), then completed ones; trashed cards have no folder. */
+function folderTasks() {
+  const live = state.tasks.filter((t) => !t.deletedAt);
+  const order = owners(state);
+  const byOwner = (a, b) => order.indexOf(a.owner) - order.indexOf(b.owner);
+  return [...live.filter((t) => !t.done).sort(byOwner), ...live.filter((t) => t.done).sort(byOwner)];
+}
+
+function folderEl(task) {
+  const photos = task.photos ?? [];
+  const o = ownerOf(task.owner);
+  const sub = task.done
+    ? `${o.name} · 완료${task.doneAt && photos.length ? ` · ${doneFolderDaysLeft(task.doneAt, Date.now())}일 후 사진 삭제` : ""}`
+    : o.name;
+  const details = h("details", { class: "folder", dataset: { id: task.id } },
+    h("summary", {},
+      h("span", { class: "folder-icon", "aria-hidden": "true" }, icon("folder", 20)),
+      h("span", { class: "folder-main" }, h("span", { class: "folder-name" }, task.text), h("span", { class: "folder-sub" }, sub)),
+      h("span", { class: "count" }, String(photos.length)),
+      icon("chevron-down", 16)),
+    h("div", { class: "folder-body" },
+      h("button", { class: "text-btn folder-add", type: "button", "aria-label": `“${task.text}” 폴더에 사진 추가`, onClick: () => pickPhotos(task.id) },
+        icon("camera", 16), "사진 추가"),
+      photos.length
+        ? h("div", { class: "photo-grid", role: "list" }, photos.map((p) => h("button", {
+          class: "photo-cell", type: "button", role: "listitem", "aria-label": `사진 ${p.name} 크게 보기`, onClick: () => openPhoto(task.id, p.id),
+        }, h("img", { src: p.url, alt: "", loading: "lazy", decoding: "async" }), h("span", {}, p.name))))
+        : h("p", { class: "folder-empty" }, "아직 사진이 없어요")));
+  details.open = openFolders.has(task.id);
+  details.addEventListener("toggle", () => { if (details.open) openFolders.add(task.id); else openFolders.delete(task.id); });
+  return details;
+}
+
+function fillAlbum() {
+  if (!albumDialog) return;
+  const scroll = albumDialog.scrollTop;
+  const tasks = folderTasks();
+  albumDialog.replaceChildren(h("div", { class: "album-inner" },
+    h("header", { class: "album-head" },
+      h("h2", { class: "cal-title" }, "사진첩"),
+      h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: () => animateClose(albumDialog) }, icon("x"))),
+    h("p", { class: "album-note" }, `사진은 올린 지 ${PHOTO_MONTHS}개월이 지나면, 완료한 업무의 사진은 ${DONE_FOLDER_DAYS}일이 지나면 자동으로 지워져요.`),
+    tasks.length ? tasks.map(folderEl) : h("p", { class: "folder-empty" }, "업무를 추가하면 여기에 폴더가 생겨요")));
+  albumDialog.scrollTop = scroll;
+}
+
+/** Full-size look at one photo. Delete removes the file from Blob too (two taps to confirm). */
+function openPhoto(taskId, photoId) {
+  const photo = (taskOf(taskId)?.photos ?? []).find((p) => p.id === photoId);
+  if (!photo) return;
+  const dialog = h("dialog", { class: "cal photo", "aria-label": "사진" });
+  const close = () => animateClose(dialog);
+  dialog.append(h("div", { class: "photo-inner" },
+    h("img", { class: "photo-full", src: photo.url, alt: "업무 사진" }),
+    h("div", { class: "photo-bar" },
+      armed(h("button", { class: "tool is-delete", type: "button", "aria-label": "사진 삭제" }, icon("trash")), "삭제", async () => {
+        try {
+          await deletePhotoFiles([photo.url], { key: boardKey }); // the file goes first; the record stays if this fails
+        } catch (err) {
+          toast(`사진을 지우지 못했어요 — ${err.message}`);
+          return;
+        }
+        close();
+        commit((s) => removePhoto(s, taskId, photoId));
+        toast("사진을 지웠어요");
+      }),
+      h("p", { class: "photo-name" }, photo.name),
+      h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: close }, icon("x")))));
+  wireDialog(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+/** Photos whose time is up (6 months after upload; 30 days after their task was completed). Files first, then the records. */
+async function sweepPhotos() {
+  const now = Date.now();
+  const found = expiredPhotos(state, photoCutoff(now), doneFolderCutoff(now));
+  if (!found.length) return;
+  try {
+    await deletePhotoFiles(found.map((p) => p.url), { key: boardKey });
+  } catch {
+    return; // keep the records; the next hourly check tries again
+  }
+  const ids = found.map((p) => p.id);
+  commit((s) => dropPhotos(s, ids));
+}
+
+/** Files of tasks that are being deleted for good (best effort — the tasks are gone either way). */
+function releasePhotoFiles(tasks) {
+  const urls = photoUrlsOf(tasks);
+  if (urls.length) deletePhotoFiles(urls, { key: boardKey }).catch(() => {});
 }
 
 /** A card that just landed somewhere (drag, sheet, keyboard) gets a short ring so the eye can find it. */
@@ -540,6 +695,7 @@ function renderTrash() {
     h("p", {}, `${items.length}건`),
     items.length ? armed(h("button", { class: "text-btn danger push-right", type: "button", "aria-label": "휴지통 비우기" }, "비우기"),
       "모두 영구 삭제", () => {
+        releasePhotoFiles(trashOf(state));
         commit((s) => emptyTrash(s));
         toast("휴지통을 비웠어요");
       }) : null);
@@ -562,6 +718,7 @@ function renderTrash() {
               } }, icon("restore", 16), "복구"),
             armed(h("button", { class: "tool is-delete", type: "button", "aria-label": `“${t.text}” 영구 삭제` }, icon("trash")),
               "영구 삭제", () => {
+                releasePhotoFiles([t]);
                 commit((s) => removeTask(s, t.id).state);
                 toast("영구 삭제했어요");
               })));
@@ -578,7 +735,9 @@ function daysLeftLabel(days) {
 /** Drop trashed tasks older than TRASH_DAYS. Runs at start and hourly; commits only when something expired. */
 function purgeExpiredTrash() {
   const cutoff = trashCutoff(Date.now()); // fixed here so a retried op is identical
-  if (!state.tasks.some((t) => t.deletedAt && t.deletedAt < cutoff)) return;
+  const expired = state.tasks.filter((t) => t.deletedAt && t.deletedAt < cutoff);
+  if (!expired.length) return;
+  releasePhotoFiles(expired);
   commit((s) => purgeTrash(s, cutoff));
 }
 
@@ -623,6 +782,7 @@ function setCount(el, key, n) {
 function render() {
   pendingRender = false;
   if (!busy()) state = sync.mode === "shared" ? sync.view() : local;
+  fillAlbum(); // the album (if open) follows the board
   const active = state.tasks.filter((t) => !t.done && !t.deletedAt).length;
   const done = doneOf(state).length;
   const nActive = document.getElementById("nActive");
@@ -869,6 +1029,8 @@ function stamp() {
 }
 
 document.getElementById("stamp").addEventListener("click", () => openCalendar({ people: state.people, today: todayIso() }));
+document.getElementById("albumBtn").append(icon("album", 20));
+document.getElementById("albumBtn").addEventListener("click", openAlbum);
 
 // Board <-> completed list. The list has its own history entry (#done) so Back returns to the board.
 function setView(next, { push = true } = {}) {
@@ -899,7 +1061,8 @@ async function connect() {
   showStatus({ mode: "connecting", pending: 0 });
   const shared = await sync.start(local);
   purgeExpiredTrash(); // after start, so a shared board is cleaned on the server copy, not the local one
-  setInterval(() => { if (!busy()) purgeExpiredTrash(); }, PURGE_MS);
+  sweepPhotos();
+  setInterval(() => { if (!busy()) { purgeExpiredTrash(); sweepPhotos(); } }, PURGE_MS);
   if (!shared) return;
   setInterval(() => { if (!document.hidden && !busy()) sync.poll(); }, POLL_MS);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) sync.poll(); });

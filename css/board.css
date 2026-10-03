@@ -239,7 +239,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 }
 /* Space above and below the date equals the space between cards. */
 .hero { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: var(--gap); }
-.album-btn { width: 36px; height: 36px; }
+.album-btn { display: inline-flex; align-items: center; gap: 6px; width: auto; height: 36px; padding: 0 12px; font-size: 15px; line-height: 20px; font-weight: 600; white-space: nowrap; }
 .date-btn {
   position: relative;
   display: inline-flex;
@@ -644,7 +644,43 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .album-head .icon-btn { width: 44px; height: 44px; }
 .album-head .icon-btn::after { display: none; }
 .album-note, .folder-empty { margin: 0; font-size: 12px; line-height: 16px; color: var(--tertiary-label); }
-.folder { border-radius: var(--r-card); background: var(--fill); overflow: hidden; }
+/* one card per owner in their colour: tinted surface, hairline in the colour, avatar header */
+.album-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--r-lane);
+  background: color-mix(in srgb, var(--c) 14%, var(--secondary-background));
+  border: 0.5px solid color-mix(in srgb, var(--c) 40%, transparent);
+}
+.album-card-head { display: flex; align-items: center; gap: 8px; padding: 0 2px 2px; }
+.album-card-head h3 { margin: 0; flex: 1; min-width: 0; font-size: 17px; line-height: 22px; font-weight: 600; letter-spacing: -0.03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.album-done { border-radius: var(--r-lane); background: var(--fill); overflow: hidden; }
+.album-done > summary { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 16px; list-style: none; cursor: pointer; font-size: 16px; font-weight: 600; color: var(--secondary-label); }
+.album-done > summary::-webkit-details-marker { display: none; }
+.album-done > summary > span:first-child { flex: 1; }
+.album-done > summary .icon-chevron-down { transition: transform 0.25s var(--ease); }
+.album-done[open] > summary .icon-chevron-down { transform: rotate(180deg); }
+.album-done-body { display: grid; gap: 10px; padding: 0 10px 10px; }
+/* swipe row: the 삭제 button sits behind the folder, which slides left over it */
+.folder-row { position: relative; border-radius: var(--r-card); overflow: hidden; }
+.folder-del {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 88px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 0;
+  background: var(--destructive);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+.folder-del:disabled { opacity: 0.6; }
+.folder-row > .folder { position: relative; transition: transform 0.3s var(--ease); touch-action: pan-y; }
+.folder { border-radius: var(--r-card); background: var(--secondary-background); overflow: hidden; }
 .folder > summary {
   display: flex;
   align-items: center;

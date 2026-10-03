@@ -278,24 +278,99 @@ function openAlbum() {
   dialog.showModal();
 }
 
-/** Active cards first (board order), then completed ones; trashed cards have no folder. */
-function folderTasks() {
-  const live = state.tasks.filter((t) => !t.deletedAt);
-  const order = owners(state);
-  const byOwner = (a, b) => order.indexOf(a.owner) - order.indexOf(b.owner);
-  return [...live.filter((t) => !t.done).sort(byOwner), ...live.filter((t) => t.done).sort(byOwner)];
+const SWIPE_W = 88; // width of the 삭제 button a right-to-left swipe reveals
+let swipedClose = null; // closes the one folder row that is currently swiped open
+
+/** Right-to-left swipe on a folder row reveals 삭제, which removes that folder's photos (files too). */
+function swipeToDelete(details, task) {
+  const photos = task.photos ?? [];
+  const del = h("button", { class: "folder-del", type: "button", tabindex: "-1", "aria-hidden": "true", "aria-label": `“${task.text}” 폴더의 사진 ${photos.length}장 삭제` },
+    icon("trash", 18), "삭제");
+  const row = h("div", { class: "folder-row" }, del, details);
+  const setX = (x, animate) => {
+    details.style.transition = animate ? "" : "none";
+    details.style.transform = x ? `translateX(${x}px)` : "";
+  };
+  const setOpen = (open) => {
+    row.classList.toggle("is-swiped", open);
+    del.tabIndex = open ? 0 : -1;
+    if (open) del.removeAttribute("aria-hidden"); else del.setAttribute("aria-hidden", "true");
+    setX(open ? -SWIPE_W : 0, true);
+    if (open) {
+      if (swipedClose && swipedClose !== close) swipedClose();
+      swipedClose = close;
+    } else if (swipedClose === close) {
+      swipedClose = null;
+    }
+  };
+  const close = () => setOpen(false);
+  let pointer = null; // { id, x, y, base, mode: "pending" | "swipe", cur }
+  details.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !e.target.closest("summary")) return;
+    pointer = { id: e.pointerId, x: e.clientX, y: e.clientY, base: row.classList.contains("is-swiped") ? -SWIPE_W : 0, mode: "pending", cur: 0 };
+  });
+  details.addEventListener("pointermove", (e) => {
+    if (!pointer || e.pointerId !== pointer.id) return;
+    const dx = e.clientX - pointer.x;
+    const dy = e.clientY - pointer.y;
+    if (pointer.mode === "pending") {
+      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        pointer.mode = "swipe";
+        details.setPointerCapture(e.pointerId);
+      } else if (Math.abs(dy) > 8) {
+        pointer = null; // a vertical scroll, not a swipe
+        return;
+      } else {
+        return;
+      }
+    }
+    pointer.cur = Math.max(-SWIPE_W, Math.min(0, pointer.base + dx));
+    setX(pointer.cur, false);
+  });
+  const finish = (e) => {
+    if (!pointer || e.pointerId !== pointer.id) return;
+    const swiped = pointer.mode === "swipe";
+    const open = pointer.cur < -SWIPE_W / 2;
+    pointer = null;
+    if (swiped) {
+      setOpen(open);
+      details.dataset.swiped = "1"; // the click that follows the release must not toggle the folder
+      setTimeout(() => { delete details.dataset.swiped; }, 0);
+    }
+  };
+  details.addEventListener("pointerup", finish);
+  details.addEventListener("pointercancel", finish);
+  details.addEventListener("click", (e) => {
+    const onSummary = e.target.closest("summary");
+    if (details.dataset.swiped || (onSummary && row.classList.contains("is-swiped"))) {
+      e.preventDefault(); // after a swipe, or tapping an open row, only close/stay
+      e.stopPropagation();
+      if (!details.dataset.swiped) close();
+    }
+  }, true);
+  del.addEventListener("click", async () => {
+    del.disabled = true;
+    try {
+      await deletePhotoFiles(photos.map((p) => p.url), { key: boardKey }); // files first; records stay if this fails
+    } catch (err) {
+      del.disabled = false;
+      toast(`사진을 지우지 못했어요 — ${err.message}`);
+      return;
+    }
+    const ids = photos.map((p) => p.id);
+    commit((s) => dropPhotos(s, ids));
+    toast(`“${task.text.slice(0, 18)}” 폴더의 사진 ${ids.length}장을 지웠어요`);
+  });
+  return row;
 }
 
 function folderEl(task) {
   const photos = task.photos ?? [];
-  const o = ownerOf(task.owner);
-  const sub = task.done
-    ? `${o.name} · 완료${task.doneAt && photos.length ? ` · ${doneFolderDaysLeft(task.doneAt, Date.now())}일 후 사진 삭제` : ""}`
-    : o.name;
+  const sub = task.done && task.doneAt && photos.length ? `완료 · ${doneFolderDaysLeft(task.doneAt, Date.now())}일 후 사진 삭제` : task.done ? "완료" : "";
   const details = h("details", { class: "folder", dataset: { id: task.id } },
     h("summary", {},
       h("span", { class: "folder-icon", "aria-hidden": "true" }, icon("folder", 20)),
-      h("span", { class: "folder-main" }, h("span", { class: "folder-name" }, task.text), h("span", { class: "folder-sub" }, sub)),
+      h("span", { class: "folder-main" }, h("span", { class: "folder-name" }, task.text), sub ? h("span", { class: "folder-sub" }, sub) : null),
       h("span", { class: "count" }, String(photos.length)),
       icon("chevron-down", 16)),
     h("div", { class: "folder-body" },
@@ -308,19 +383,45 @@ function folderEl(task) {
         : h("p", { class: "folder-empty" }, "아직 사진이 없어요")));
   details.open = openFolders.has(task.id);
   details.addEventListener("toggle", () => { if (details.open) openFolders.add(task.id); else openFolders.delete(task.id); });
+  return photos.length ? swipeToDelete(details, task) : details; // nothing to delete -> no swipe
+}
+
+/** One card per person / 공통 in their own colour, holding that owner's folders. (정기 업무 has no folders.) */
+function ownerCards(tasks) {
+  const groups = [...state.people.map((p) => ({ cls: p.id, name: p.name, id: p.id })), { cls: SHARED[COMMON].cls, name: SHARED[COMMON].name, id: COMMON }];
+  return groups
+    .map((g) => ({ g, rows: tasks.filter((t) => t.owner === g.id) }))
+    .filter(({ rows }) => rows.length)
+    .map(({ g, rows }) => h("section", { class: `album-card ${g.cls}`, "aria-label": `${g.name} 폴더` },
+      h("header", { class: "album-card-head" }, avatar(g.cls, g.name), h("h3", {}, g.name), h("span", { class: "count" }, String(rows.length))),
+      rows.map(folderEl)));
+}
+
+let doneFoldersOpen = false; // the folded "완료한 업무" section at the bottom
+
+function doneFolders(tasks) {
+  const details = h("details", { class: "album-done" },
+    h("summary", {}, h("span", {}, "완료한 업무"), h("span", { class: "count" }, String(tasks.length)), icon("chevron-down", 16)),
+    h("div", { class: "album-done-body" }, ownerCards(tasks)));
+  details.open = doneFoldersOpen;
+  details.addEventListener("toggle", () => { doneFoldersOpen = details.open; });
   return details;
 }
 
 function fillAlbum() {
   if (!albumDialog) return;
   const scroll = albumDialog.scrollTop;
-  const tasks = folderTasks();
+  swipedClose = null; // the rows are rebuilt closed
+  const live = state.tasks.filter((t) => !t.deletedAt && t.owner !== REGULAR);
+  const active = live.filter((t) => !t.done);
+  const finished = live.filter((t) => t.done);
   albumDialog.replaceChildren(h("div", { class: "album-inner" },
     h("header", { class: "album-head" },
       h("h2", { class: "cal-title" }, "사진첩"),
       h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: () => animateClose(albumDialog) }, icon("x"))),
-    h("p", { class: "album-note" }, `사진은 올린 지 ${PHOTO_MONTHS}개월이 지나면, 완료한 업무의 사진은 ${DONE_FOLDER_DAYS}일이 지나면 자동으로 지워져요.`),
-    tasks.length ? tasks.map(folderEl) : h("p", { class: "folder-empty" }, "업무를 추가하면 여기에 폴더가 생겨요")));
+    h("p", { class: "album-note" }, `폴더를 오른쪽에서 왼쪽으로 밀면 삭제 버튼이 나와요. 사진은 올린 지 ${PHOTO_MONTHS}개월이 지나면, 완료한 업무의 사진은 ${DONE_FOLDER_DAYS}일이 지나면 자동으로 지워져요.`),
+    active.length ? ownerCards(active) : h("p", { class: "folder-empty" }, "진행 중인 업무를 추가하면 여기에 폴더가 생겨요"),
+    finished.length ? doneFolders(finished) : null));
   albumDialog.scrollTop = scroll;
 }
 
@@ -1029,7 +1130,7 @@ function stamp() {
 }
 
 document.getElementById("stamp").addEventListener("click", () => openCalendar({ people: state.people, today: todayIso() }));
-document.getElementById("albumBtn").append(icon("album", 20));
+document.getElementById("albumBtn").prepend(icon("album", 18));
 document.getElementById("albumBtn").addEventListener("click", openAlbum);
 
 // Board <-> completed list. The list has its own history entry (#done) so Back returns to the board.

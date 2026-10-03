@@ -707,6 +707,8 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .photo-cell img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border: 0.5px solid var(--separator); border-radius: var(--r-control); background: var(--fill); }
 .photo-cell span { font-size: 11px; line-height: 14px; color: var(--secondary-label); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .photo-cell:active img { transform: scale(0.97); }
+.photo-cell img { box-sizing: border-box; }
+.photo-cell.is-downloaded img { border: 3px solid var(--c); } /* downloaded: the owner's card colour (--c comes from the card) */
 .photo-inner { display: grid; gap: 8px; padding: 10px; }
 .photo-full { display: block; width: 100%; max-height: calc(100dvh - 120px); object-fit: contain; border-radius: var(--r-card); background: var(--fill); }
 .photo-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

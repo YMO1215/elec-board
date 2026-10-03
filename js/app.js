@@ -279,6 +279,21 @@ function openAlbum() {
   dialog.showModal();
 }
 
+// Photos this device has downloaded: their thumbnail gets a border in the owner's card colour.
+// Per device on purpose (what you saved to this phone/PC), so it lives in local storage, not on the shared board.
+const DOWNLOADED_KEY = "magnet-board:downloaded";
+const downloaded = new Set((() => {
+  try { return JSON.parse(storage.getItem(DOWNLOADED_KEY) ?? "[]"); } catch { return []; }
+})());
+
+function markDownloaded(ids) {
+  for (const id of ids) downloaded.add(id);
+  const live = new Set(state.tasks.flatMap((t) => (t.photos ?? []).map((p) => p.id)));
+  for (const id of [...downloaded]) if (!live.has(id)) downloaded.delete(id); // forget deleted photos
+  try { storage.setItem(DOWNLOADED_KEY, JSON.stringify([...downloaded])); } catch { /* storage blocked: the mark lasts this session */ }
+  fillAlbum();
+}
+
 /** All of a folder's photos as one zip (named by shooting time inside). */
 async function downloadFolder(task) {
   const photos = task.photos ?? [];
@@ -290,6 +305,7 @@ async function downloadFolder(task) {
       files.push({ name: `${fileSafe(p.name)}.jpg`, data: new Uint8Array(await (await fetchPhoto(p.url, boardKey)).arrayBuffer()) });
     }
     saveBlob(new Blob([makeZip(files)], { type: "application/zip" }), `${fileSafe(task.text, "사진첩")}.zip`);
+    markDownloaded(photos.map((p) => p.id));
     toast(`사진 ${photos.length}장을 내려받았어요`);
   } catch (err) {
     toast(`내려받지 못했어요 — ${err.message}`);
@@ -300,6 +316,7 @@ async function downloadFolder(task) {
 async function downloadPhoto(photo) {
   try {
     saveBlob(await fetchPhoto(photo.url, boardKey), `${fileSafe(photo.name)}.jpg`);
+    markDownloaded([photo.id]);
   } catch (err) {
     toast(`내려받지 못했어요 — ${err.message}`);
   }
@@ -410,7 +427,8 @@ function folderEl(task) {
           : null),
       photos.length
         ? h("div", { class: "photo-grid", role: "list" }, photos.map((p) => h("button", {
-          class: "photo-cell", type: "button", role: "listitem", "aria-label": `사진 ${p.name} 크게 보기`, onClick: () => openPhoto(task.id, p.id),
+          class: `photo-cell${downloaded.has(p.id) ? " is-downloaded" : ""}`, type: "button", role: "listitem",
+          "aria-label": `사진 ${p.name} 크게 보기${downloaded.has(p.id) ? " (내려받음)" : ""}`, onClick: () => openPhoto(task.id, p.id),
         }, h("img", { src: photoSrc(p.url, boardKey), alt: "", loading: "lazy", decoding: "async" }), h("span", {}, p.name))))
         : h("p", { class: "folder-empty" }, "아직 사진이 없어요")));
   details.open = openFolders.has(task.id);

@@ -458,6 +458,29 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 }
 /* Tools never share the text's row: on touch screens they get their own row under the text;
    with a mouse they float over the card's corner only while hovered (no width taken at all). */
+/* "this card has photos": a small chip in the tools row's free left side */
+.photo-mark {
+  position: relative;
+  grid-column: 2;
+  grid-row: 3;
+  justify-self: start;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 8px 0 6px;
+  border: 0.5px solid var(--separator);
+  border-radius: 12px;
+  background: var(--secondary-background);
+  color: var(--tint);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.photo-mark::after { content: ""; position: absolute; inset: -10px -6px; } /* 44px touch target */
+.photo-mark:active { transform: scale(0.97); }
 .note-tools { grid-column: 2 / -1; grid-row: 3; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .tool {
   position: relative;

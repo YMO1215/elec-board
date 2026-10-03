@@ -268,7 +268,17 @@ async function addPhotos(taskId, files) {
 const openFolders = new Set(); // folders left open (per session)
 let albumDialog = null;
 
-function openAlbum() {
+/** Small chip on a board card that has photos; it opens the album at that card's folder. */
+function photoMark(task) {
+  const n = (task.photos ?? []).length;
+  if (!n || task.owner === REGULAR) return null; // 정기 업무 has no folder in the album
+  return h("button", {
+    class: "photo-mark", type: "button", "aria-label": `사진 ${n}장, 사진첩에서 보기`,
+    onClick: () => { openFolders.add(task.id); openAlbum(task.id); },
+  }, icon("album", 14), h("span", {}, String(n)));
+}
+
+function openAlbum(focusId = null) {
   if (albumDialog) return;
   const dialog = h("dialog", { class: "cal album", "aria-label": "사진첩" });
   albumDialog = dialog;
@@ -277,6 +287,7 @@ function openAlbum() {
   document.body.append(dialog);
   fillAlbum();
   dialog.showModal();
+  if (focusId) dialog.querySelector(`.folder[data-id="${focusId}"]`)?.scrollIntoView({ block: "center" });
 }
 
 // Photos this device has downloaded: their thumbnail gets a border in the owner's card colour.
@@ -548,6 +559,7 @@ function noteEl(task) {
     magnet,
     text,
     extra?.button, // pinned to the card's right edge on the first line, however the text wraps
+    photoMark(task),
     commentsEl(task),
     h("div", { class: "note-tools" },
       h("button", { class: "tool is-done", type: "button", "aria-label": `“${task.text}” 완료`, onClick: (e) => complete(task, e.currentTarget) }, icon("check")),
@@ -1182,7 +1194,7 @@ function stamp() {
 
 document.getElementById("stamp").addEventListener("click", () => openCalendar({ people: state.people, today: todayIso() }));
 document.getElementById("albumBtn").prepend(icon("album", 18));
-document.getElementById("albumBtn").addEventListener("click", openAlbum);
+document.getElementById("albumBtn").addEventListener("click", () => openAlbum());
 
 // Board <-> completed list. The list has its own history entry (#done) so Back returns to the board.
 function setView(next, { push = true } = {}) {

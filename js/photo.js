@@ -54,6 +54,11 @@ function endpoint(params, key) {
   return `api/upload${q ? `?${q}` : ""}`;
 }
 
+/** Address the browser loads a photo from: our own domain, not the Blob host (which some networks block). */
+export function photoSrc(url, key = null) {
+  return `api/photo?u=${encodeURIComponent(url)}${key ? `&key=${encodeURIComponent(key)}` : ""}`;
+}
+
 /** Upload a shrunk Blob into the task's folder; resolves to the public URL. */
 export async function uploadPhoto(blob, { folder, name, key = null, fetchImpl = (...a) => fetch(...a) }) {
   const res = await fetchImpl(endpoint({ folder, name }, key), {

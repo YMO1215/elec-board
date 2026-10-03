@@ -11,7 +11,7 @@ import {
   TRASH_DAYS, removePhoto, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
 } from "./store.js";
 import { POLL_MS, createSync } from "./sync.js";
-import { deletePhotoFiles, photoName, shrinkPhoto, uploadPhoto } from "./photo.js";
+import { deletePhotoFiles, photoName, photoSrc, shrinkPhoto, uploadPhoto } from "./photo.js";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const DRAG_THRESHOLD = 3;
@@ -379,7 +379,7 @@ function folderEl(task) {
       photos.length
         ? h("div", { class: "photo-grid", role: "list" }, photos.map((p) => h("button", {
           class: "photo-cell", type: "button", role: "listitem", "aria-label": `사진 ${p.name} 크게 보기`, onClick: () => openPhoto(task.id, p.id),
-        }, h("img", { src: p.url, alt: "", loading: "lazy", decoding: "async" }), h("span", {}, p.name))))
+        }, h("img", { src: photoSrc(p.url, boardKey), alt: "", loading: "lazy", decoding: "async" }), h("span", {}, p.name))))
         : h("p", { class: "folder-empty" }, "아직 사진이 없어요")));
   details.open = openFolders.has(task.id);
   details.addEventListener("toggle", () => { if (details.open) openFolders.add(task.id); else openFolders.delete(task.id); });
@@ -432,7 +432,7 @@ function openPhoto(taskId, photoId) {
   const dialog = h("dialog", { class: "cal photo", "aria-label": "사진" });
   const close = () => animateClose(dialog);
   dialog.append(h("div", { class: "photo-inner" },
-    h("img", { class: "photo-full", src: photo.url, alt: "업무 사진" }),
+    h("img", { class: "photo-full", src: photoSrc(photo.url, boardKey), alt: "업무 사진" }),
     h("div", { class: "photo-bar" },
       armed(h("button", { class: "tool is-delete", type: "button", "aria-label": "사진 삭제" }, icon("trash")), "삭제", async () => {
         try {

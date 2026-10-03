@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { exifDateTime } from "../js/exif.js";
-import { MAX_PHOTO_BYTES, handleDelete, handleUpload, safeName } from "../lib/photo-upload.js";
+import { MAX_PHOTO_BYTES, handleDelete, handlePhoto, handleUpload, safeName } from "../lib/photo-upload.js";
 import { fitSize, formatName } from "../js/photo.js";
 import {
   MAX_PHOTOS, addPhoto, addTask, doneFolderCutoff, doneFolderDaysLeft, dropPhotos, expiredPhotos, initialState,
@@ -97,6 +97,23 @@ test("delete removes only our own photo urls from Blob", async () => {
   assert.equal((await handleDelete({ method: "DELETE", body: { urls: [URL1] } }, { del, key: "k" })).status, 401);
   assert.equal((await handleDelete({ method: "POST", body: { urls: [URL1] } }, { del })).status, 405);
   assert.equal(gone.length, 1);
+});
+
+test("photo proxy serves only our own photo urls, honours the key, and reports upstream failures", async () => {
+  const bytes = jpeg(10);
+  const ok = async () => ({ ok: true, status: 200, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) });
+  const out = await handlePhoto({ method: "GET", query: { u: URL1 } }, { fetchImpl: ok });
+  assert.equal(out.status, 200);
+  assert.deepEqual([...out.body], [...bytes]);
+  let called = false;
+  const spy = async () => { called = true; return ok(); };
+  assert.equal((await handlePhoto({ method: "GET", query: { u: "https://evil.example/photos/x.jpg" } }, { fetchImpl: spy })).status, 400);
+  assert.equal((await handlePhoto({ method: "GET", query: { u: "http://abc.public.blob.vercel-storage.com/photos/x.jpg" } }, { fetchImpl: spy })).status, 400);
+  assert.equal((await handlePhoto({ method: "GET", query: { u: URL1 } }, { fetchImpl: spy, key: "k" })).status, 401);
+  assert.equal((await handlePhoto({ method: "POST", query: { u: URL1 } }, { fetchImpl: spy })).status, 405);
+  assert.equal(called, false); // nothing outside our photos is ever fetched
+  assert.equal((await handlePhoto({ method: "GET", query: { u: URL1 } }, { fetchImpl: async () => ({ ok: false, status: 404 }) })).status, 404);
+  assert.equal((await handlePhoto({ method: "GET", query: { u: URL1 } }, { fetchImpl: async () => ({ ok: false, status: 500 }) })).status, 502);
 });
 
 test("addPhoto / removePhoto are idempotent and only take blob urls", () => {

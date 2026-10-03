@@ -239,7 +239,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 }
 /* Space above and below the date equals the space between cards. */
 .hero { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: var(--gap); }
-.album-btn { display: inline-flex; align-items: center; gap: 6px; width: auto; height: 36px; padding: 0 12px; font-size: 15px; line-height: 20px; font-weight: 600; white-space: nowrap; }
+.hero .album-btn { display: inline-flex; flex: none; align-items: center; gap: 6px; width: auto; height: 36px; padding: 0 12px; font-size: 15px; line-height: 20px; font-weight: 600; white-space: nowrap; }
 .date-btn {
   position: relative;
   display: inline-flex;

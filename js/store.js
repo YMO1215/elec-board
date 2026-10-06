@@ -160,7 +160,7 @@ export function removeComment(state, taskId, commentId) {
   return { ...state, tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, comments } : t)) };
 }
 
-export const MAX_PHOTOS = 10;
+export const MAX_PHOTOS = Infinity; // no per-card limit (board JSON still capped by MAX_BODY_BYTES on the server)
 const PHOTO_HOST = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\//;
 
 export const PHOTO_MONTHS = 6; // a photo is removed this many months after it was uploaded

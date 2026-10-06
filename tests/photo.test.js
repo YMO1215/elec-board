@@ -127,10 +127,12 @@ test("addPhoto / removePhoto are idempotent and only take blob urls", () => {
   assert.equal(removePhoto(s, "t1", "zzz"), s);
 });
 
-test("a task holds at most MAX_PHOTOS photos", () => {
+test("a task has no photo limit (MAX_PHOTOS is Infinity)", () => {
+  assert.equal(MAX_PHOTOS, Infinity);
   let s = addTask(initialState(), "p1", "점검", "t1");
-  for (let i = 0; i < MAX_PHOTOS + 3; i += 1) s = addPhoto(s, "t1", photo(`f${i}`));
-  assert.equal(s.tasks[0].photos.length, MAX_PHOTOS);
+  for (let i = 0; i < 25; i += 1) s = addPhoto(s, "t1", photo(`f${i}`));
+  assert.equal(s.tasks[0].photos.length, 25);
+  assert.equal(parse(JSON.stringify(s)).tasks[0].photos.length, 25);
 });
 
 test("parse keeps valid photos and drops malformed ones; old boards get an empty list", () => {

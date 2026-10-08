@@ -5,7 +5,7 @@ import { icon } from "./icons.js";
 import { openCalendar } from "./calendar.js";
 import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
-  COMMON, MAX_PHOTOS, MAX_TEXT, REGULAR, STORAGE_KEY, addPhoto, addTask, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee,
+  COMMON, MAX_PHOTOS, MAX_TEXT, REGULAR, STORAGE_KEY, addContact, addPhoto, addTask, removeContact, updateContact, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee,
   activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
   DONE_FOLDER_DAYS, PHOTO_MONTHS, doneFolderCutoff, doneFolderDaysLeft, dropPhotos, expiredPhotos, photoCutoff, photoUrlsOf,
   TRASH_DAYS, removePhoto, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
@@ -36,6 +36,7 @@ let local = load(storage); // this browser's copy; in shared mode it is the fast
 let state = local; // what the screen shows
 let editing = null; // { owner, id|null }
 let renaming = null; // person id
+let contactEditing = null; // 연락처 card: "new" | contact id | null
 let dragging = false;
 const viewFromHash = () => (location.hash === "#trash" ? "trash" : location.hash === "#done" ? "done" : "board");
 let view = viewFromHash(); // board | done | trash (trash lives inside the 완료 screen)
@@ -58,7 +59,7 @@ let quiet = false; // a change whose result is already on screen (the user just 
 let pendingRender = false; // a redraw was skipped while the user was busy
 
 function busy() {
-  return Boolean(dragging || editing || renaming || typingInNote());
+  return Boolean(dragging || editing || renaming || contactEditing || typingInNote());
 }
 
 function refresh() {
@@ -1005,6 +1006,7 @@ function render() {
     document.getElementById(`${id}-drop`).replaceChildren(dropZone(id, "wrap"));
   }
   firstPaint = false;
+  renderContacts();
 
   // Focus synchronously: keystrokes typed right after tapping + must not be lost.
   const area = document.querySelector(".editor");
@@ -1020,6 +1022,90 @@ function render() {
   if (focusComposer) {
     document.querySelector(`.note[data-id="${focusComposer}"] .comment-input`)?.focus({ preventScroll: true });
     focusComposer = null;
+  }
+}
+
+// ---------------------------------------------------------------- 연락처 card (bottom of the board)
+
+const CONTACT_FIELDS = [
+  { key: "company", label: "업체명", type: "text", autocomplete: "organization" },
+  { key: "name", label: "이름", type: "text", autocomplete: "name" },
+  { key: "phone", label: "연락처", type: "tel", autocomplete: "tel" },
+];
+let focusContact = false; // put the caret into the open editor right after the next render
+
+function openContactEditor(id) {
+  contactEditing = id;
+  focusContact = true;
+  render();
+}
+
+function closeContactEditor() {
+  contactEditing = null;
+  render();
+}
+
+function contactEditor(contact) {
+  const inputs = CONTACT_FIELDS.map((f) => h("input", {
+    class: "contact-input", type: f.type, value: contact?.[f.key] ?? "", placeholder: f.label, maxlength: 60,
+    "aria-label": f.label, autocomplete: f.autocomplete, enterkeyhint: f.key === "phone" ? "done" : "next",
+  }));
+  const values = () => Object.fromEntries(CONTACT_FIELDS.map((f, i) => [f.key, inputs[i].value]));
+  const submit = () => {
+    const v = values();
+    if (!(v.company.trim() || v.name.trim() || v.phone.trim())) { toast("업체명, 이름, 연락처 중 하나는 적어 주세요"); inputs[0].focus(); return; }
+    contactEditing = null;
+    commit(contact ? (s) => updateContact(s, contact.id, v) : (s) => addContact(s, { id, ...v }));
+    render();
+  };
+  const id = contact?.id ?? newId();
+  for (const input of inputs) {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); submit(); } // preventDefault: the same Enter must not click a button we move focus to
+      else if (e.key === "Escape") { e.preventDefault(); closeContactEditor(); }
+    });
+  }
+  const del = contact
+    ? armed(h("button", { class: "text-btn danger", type: "button", "aria-label": `${contact.company || contact.name || contact.phone} 삭제` }, "삭제"), "정말 삭제",
+      () => { contactEditing = null; commit((s) => removeContact(s, contact.id)); render(); })
+    : null;
+  return h("li", { class: "contact is-editing" },
+    h("div", { class: "contact-fields" }, inputs),
+    h("div", { class: "contact-actions" },
+      del,
+      h("span", { class: "spacer" }),
+      h("button", { class: "text-btn quiet", type: "button", onClick: closeContactEditor }, "취소"),
+      h("button", { class: "text-btn", type: "button", onClick: submit }, "저장")));
+}
+
+function contactRow(contact) {
+  const digits = contact.phone.replace(/[^\d+]/g, "");
+  return h("li", { class: "contact" },
+    h("div", { class: "contact-body" },
+      contact.company ? h("p", { class: "contact-company" }, contact.company) : null,
+      contact.name ? h("p", { class: "contact-name" }, contact.name) : null,
+      contact.phone ? (digits
+        ? h("a", { class: "contact-phone", href: `tel:${digits}` }, contact.phone)
+        : h("p", { class: "contact-phone" }, contact.phone)) : null),
+    h("button", { class: "tool", type: "button", "aria-label": `${contact.company || contact.name || contact.phone} 고치기`, onClick: () => openContactEditor(contact.id) }, icon("edit")));
+}
+
+function renderContacts() {
+  const contacts = state.contacts ?? [];
+  const adding = contactEditing === "new";
+  document.getElementById("contacts").replaceChildren(
+    h("header", { class: "common-head" },
+      h("h2", { id: "contacts-title" }, "연락처"),
+      h("p", {}, contacts.length ? `${contacts.length}곳` : "업체명 · 이름 · 연락처"),
+      h("button", { class: "icon-btn add", type: "button", "aria-label": "연락처 추가", onClick: () => openContactEditor("new") }, icon("plus"))),
+    contacts.length || adding
+      ? h("ul", { class: "contact-list" },
+        contacts.map((c) => (contactEditing === c.id ? contactEditor(c) : contactRow(c))),
+        adding ? contactEditor(null) : null)
+      : h("p", { class: "hint" }, "+ 를 눌러 업체 연락처를 적어 두세요."));
+  if (focusContact) {
+    focusContact = false;
+    document.querySelector(".contact.is-editing .contact-input")?.focus();
   }
 }
 

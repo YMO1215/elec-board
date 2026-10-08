@@ -849,6 +849,57 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 }
 .common .hint { grid-column: 1 / -1; padding: 20px 8px; }
 
+/* ---------------------------------------------------------------- 연락처 card (full width, bottom of the board) */
+
+.contacts {
+  --c: var(--tint);
+  margin-top: var(--gap);
+  min-width: 0;
+  padding: 16px 12px 12px;
+  border-radius: var(--r-lane);
+  background: var(--secondary-background);
+  border: 0.5px solid var(--separator);
+}
+.contacts .common-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 12px; }
+.contacts .hint { margin: 0; padding: 12px 8px 8px; text-align: center; color: var(--tertiary-label); font-size: 15px; line-height: 20px; }
+.contact-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 8px; }
+.contact {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--r-card);
+  background: var(--fill);
+}
+.contact-body { flex: 1; min-width: 0; }
+.contact-body p, .contact-body a { display: block; margin: 0; overflow-wrap: anywhere; }
+.contact-company { font-size: 17px; line-height: 22px; font-weight: 600; }
+.contact-name { font-size: 15px; line-height: 20px; color: var(--secondary-label); }
+.contact-phone { margin-top: 2px; font-size: 15px; line-height: 20px; color: var(--tint); text-decoration: none; font-variant-numeric: tabular-nums; }
+a.contact-phone:hover { text-decoration: underline; }
+.contact .tool { opacity: 1; flex: none; }
+.contact.is-editing { flex-direction: column; align-items: stretch; gap: 10px; }
+.contact-fields { display: grid; gap: 8px; }
+.contact-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0.5px solid var(--separator);
+  border-radius: var(--r-control);
+  background: var(--secondary-background);
+  color: var(--label);
+  font: inherit;
+  font-size: 17px;
+  letter-spacing: inherit;
+}
+.contact-input::placeholder { color: var(--tertiary-label); }
+.contact-actions { display: flex; align-items: center; gap: 4px; }
+.contact-actions .spacer { flex: 1; }
+.text-btn.quiet { color: var(--secondary-label); }
+
 /* ---------------------------------------------------------------- completed list */
 
 .done-view { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); align-items: start; }

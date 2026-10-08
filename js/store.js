@@ -14,7 +14,7 @@ const DEFAULT_PEOPLE = [
 ];
 
 export function initialState() {
-  return { version: 1, people: DEFAULT_PEOPLE.map((p) => ({ ...p })), tasks: [] };
+  return { version: 1, people: DEFAULT_PEOPLE.map((p) => ({ ...p })), tasks: [], contacts: [] };
 }
 
 export function owners(state) {
@@ -226,6 +226,37 @@ export function removePhoto(state, taskId, photoId) {
   return { ...state, tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, photos } : t)) };
 }
 
+export const MAX_CONTACTS = 300;
+const MAX_CONTACT_FIELD = 60;
+
+function cleanField(value) {
+  return String(value ?? "").trim().slice(0, MAX_CONTACT_FIELD);
+}
+
+/** 연락처 card: one row = 업체명 + 이름 + 연락처. A row needs at least one of the three. `id` is fixed by the caller so a retried op is identical. */
+export function addContact(state, { id, company, name, phone }) {
+  const row = { id, company: cleanField(company), name: cleanField(name), phone: cleanField(phone) };
+  const contacts = state.contacts ?? [];
+  if (typeof id !== "string" || !id || !(row.company || row.name || row.phone) || contacts.length >= MAX_CONTACTS || contacts.some((c) => c.id === id)) return state;
+  return { ...state, contacts: [...contacts, row] };
+}
+
+export function updateContact(state, id, patch) {
+  const contacts = state.contacts ?? [];
+  const old = contacts.find((c) => c.id === id);
+  if (!old) return state;
+  const next = { ...old };
+  for (const key of ["company", "name", "phone"]) if (key in patch) next[key] = cleanField(patch[key]);
+  if (!(next.company || next.name || next.phone)) return state;
+  return { ...state, contacts: contacts.map((c) => (c.id === id ? next : c)) };
+}
+
+export function removeContact(state, id) {
+  const contacts = state.contacts ?? [];
+  if (!contacts.some((c) => c.id === id)) return state;
+  return { ...state, contacts: contacts.filter((c) => c.id !== id) };
+}
+
 export function removeTask(state, id) {
   const index = state.tasks.findIndex((t) => t.id === id);
   if (index === -1) return { state, removed: null };
@@ -282,6 +313,20 @@ function cleanPhotos(raw) {
     .slice(0, MAX_PHOTOS);
 }
 
+function cleanContacts(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const c of raw) {
+    if (!c || typeof c.id !== "string" || !c.id || seen.has(c.id)) continue;
+    const row = { id: c.id, company: cleanField(c.company), name: cleanField(c.name), phone: cleanField(c.phone) };
+    if (!(row.company || row.name || row.phone)) continue;
+    seen.add(c.id);
+    out.push(row);
+  }
+  return out.slice(0, MAX_CONTACTS);
+}
+
 /** Parse stored JSON defensively: anything malformed falls back to a fresh board. */
 export function parse(raw) {
   try {
@@ -302,7 +347,7 @@ export function parse(raw) {
         photos: cleanPhotos(t.photos),
         deletedAt: typeof t.deletedAt === "string" && ISO_TIME.test(t.deletedAt) ? t.deletedAt : null,
       }));
-    return { version: 1, people, tasks };
+    return { version: 1, people, tasks, contacts: cleanContacts(data.contacts) };
   } catch {
     return initialState();
   }

@@ -853,7 +853,7 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 
 .contacts {
   --c: var(--tint);
-  margin-bottom: var(--gap); /* sits above the lanes */
+  margin-top: var(--gap); /* last card on the board */
   min-width: 0;
   padding: 16px 12px 12px;
   border-radius: var(--r-lane);

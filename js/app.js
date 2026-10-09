@@ -906,6 +906,20 @@ function purgeExpiredTrash() {
   commit((s) => purgeTrash(s, cutoff));
 }
 
+const DONE_VISIBLE_ROWS = 4; // a card's completed list shows this many rows, then scrolls inside the card
+
+/** Cap each card's list at the height of its first DONE_VISIBLE_ROWS rows (rows differ in height when text wraps). */
+function fitDoneLists() {
+  for (const list of document.querySelectorAll("#done .done-card:not(.trash-card) .done-list")) {
+    const rows = list.children;
+    if (rows.length <= DONE_VISIBLE_ROWS) { list.style.removeProperty("--rows-h"); list.classList.remove("is-capped"); continue; }
+    const cap = rows[DONE_VISIBLE_ROWS].getBoundingClientRect().top - rows[0].getBoundingClientRect().top + list.scrollTop;
+    list.style.setProperty("--rows-h", `${Math.round(cap)}px`);
+    list.classList.add("is-capped");
+  }
+}
+window.addEventListener("resize", () => { if (view === "done") fitDoneLists(); });
+
 function renderDone() {
   const doneTasks = doneOf(state);
   const section = document.getElementById("done");
@@ -933,6 +947,7 @@ function renderDone() {
         onClick: () => setView("trash") },
       icon("trash", 18), "휴지통", trashOf(state).length ? h("span", { class: "n" }, String(trashOf(state).length)) : null)),
     ...cards);
+  fitDoneLists();
 }
 
 const lastCounts = new Map(); // key -> number, so a changed count can "bump"

@@ -5,7 +5,7 @@ import { icon } from "./icons.js";
 import { openCalendar } from "./calendar.js";
 import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
-  COMMON, MAX_PHOTOS, MAX_TEXT, REGULAR, STORAGE_KEY, addContact, addPhoto, addTask, removeContact, updateContact, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee,
+  COMMON, MAX_PHOTOS, MAX_TEXT, REGULAR, STORAGE_KEY, addContact, addPhoto, addTask, formatPhone, removeContact, updateContact, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee,
   activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
   DONE_FOLDER_DAYS, PHOTO_MONTHS, doneFolderCutoff, doneFolderDaysLeft, dropPhotos, expiredPhotos, photoCutoff, photoUrlsOf,
   TRASH_DAYS, removePhoto, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
@@ -1030,7 +1030,7 @@ function render() {
 const CONTACT_FIELDS = [
   { key: "company", label: "업체명", type: "text", autocomplete: "organization" },
   { key: "name", label: "이름", type: "text", autocomplete: "name" },
-  { key: "phone", label: "연락처", type: "tel", autocomplete: "tel" },
+  { key: "phone", label: "연락처", type: "tel", autocomplete: "tel", inputmode: "numeric", max: 13 },
   { key: "car", label: "차량번호", type: "text", autocomplete: "off" },
   { key: "memo", label: "직무 메모", type: "textarea", max: 200 },
 ];
@@ -1051,9 +1051,17 @@ function contactEditor(contact) {
   const inputs = CONTACT_FIELDS.map((f) => (f.type === "textarea"
     ? h("textarea", { class: "contact-input contact-memo", rows: 2, maxlength: f.max, placeholder: f.label, "aria-label": f.label }, contact?.[f.key] ?? "")
     : h("input", {
-      class: "contact-input", type: f.type, value: contact?.[f.key] ?? "", placeholder: f.label, maxlength: 60,
-      "aria-label": f.label, autocomplete: f.autocomplete, enterkeyhint: "next",
+      class: "contact-input", type: f.type, value: f.key === "phone" ? formatPhone(contact?.phone) : contact?.[f.key] ?? "", placeholder: f.key === "phone" ? "연락처 (숫자만)" : f.label,
+      maxlength: f.max ?? 60, inputmode: f.inputmode, "aria-label": f.label, autocomplete: f.autocomplete, enterkeyhint: "next",
     })));
+  inputs[CONTACT_FIELDS.findIndex((f) => f.key === "phone")].addEventListener("input", (e) => {
+    const el = e.currentTarget;
+    const digitsBeforeCaret = el.value.slice(0, el.selectionStart ?? el.value.length).replace(/\D/g, "").length;
+    el.value = formatPhone(el.value);
+    let caret = 0; // keep the caret after the same number of digits, hyphens added around it
+    for (let seen = 0; caret < el.value.length && seen < digitsBeforeCaret; caret += 1) if (/\d/.test(el.value[caret])) seen += 1;
+    el.setSelectionRange(caret, caret);
+  });
   const values = () => Object.fromEntries(CONTACT_FIELDS.map((f, i) => [f.key, inputs[i].value]));
   const submit = () => {
     const v = values();

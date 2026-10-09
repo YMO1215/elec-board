@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MAX_CONTACTS, addContact, initialState, parse, removeContact, updateContact } from "../js/store.js";
+import { MAX_CONTACTS, addContact, formatPhone, initialState, parse, removeContact, updateContact } from "../js/store.js";
 
 const one = { id: "c1", company: "한전KPS", name: "홍길동", phone: "010-1234-5678", car: "", memo: "" };
 
@@ -59,4 +59,13 @@ test("차량번호 and 직무 메모 are stored, trimmed, capped, and old rows g
   assert.equal(s.contacts[0].memo, "야간 담당\n비상시 먼저 연락");
   const legacy = { ...initialState(), contacts: [{ id: "old", company: "옛 업체", name: "", phone: "" }] };
   assert.deepEqual(parse(JSON.stringify(legacy)).contacts[0], { id: "old", company: "옛 업체", name: "", phone: "", car: "", memo: "" });
+});
+
+test("formatPhone keeps digits only and places hyphens while typing", () => {
+  const cases = [
+    ["", ""], ["0", "0"], ["010", "010"], ["0101", "010-1"], ["01012345678", "010-1234-5678"], ["0101234", "010-1234"],
+    ["010-1234-5678", "010-1234-5678"], ["010 1234 5678 9", "010-1234-5678"], ["abc010x1234", "010-1234"],
+    ["021234567", "02-123-4567"], ["0212345678", "02-1234-5678"], ["0311234567", "031-123-4567"], ["03112345678", "031-1234-5678"],
+  ];
+  for (const [input, want] of cases) assert.equal(formatPhone(input), want, JSON.stringify(input));
 });

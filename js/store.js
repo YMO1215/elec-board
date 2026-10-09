@@ -235,6 +235,17 @@ function cleanField(value, max = MAX_CONTACT_FIELD) {
   return String(value ?? "").trim().slice(0, max);
 }
 
+/** Digits only, hyphens placed automatically: 010-1234-5678 · 02-1234-5678 · 031-123-4567. Works while typing (partial numbers). */
+export function formatPhone(value) {
+  const d = String(value ?? "").replace(/\D/g, "").slice(0, 11);
+  const head = d.startsWith("02") ? 2 : 3;
+  if (d.length <= head) return d;
+  const rest = d.slice(head);
+  // mobile (01x) fills 4 digits in the middle; landlines with a 3-digit area code are 3-4 when they have 10 digits
+  const mid = d.startsWith("02") ? (d.length >= 10 ? 4 : 3) : !d.startsWith("01") && d.length <= 10 ? 3 : 4;
+  return rest.length <= mid ? `${d.slice(0, head)}-${rest}` : `${d.slice(0, head)}-${rest.slice(0, mid)}-${rest.slice(mid)}`;
+}
+
 /** A contact row with every field cleaned (missing ones become ""). */
 function contactRow(id, src) {
   const row = { id };

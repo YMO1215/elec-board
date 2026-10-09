@@ -1208,7 +1208,7 @@ function renderContacts() {
   const body = shown.map((g) => h("section", { class: "contact-group" },
     g.name && (contactFilter === "all" || g.rows.length === 0) ? h("h3", { class: "contact-group-title" }, g.name, h("span", { class: "n" }, String(g.rows.length))) : null,
     g.rows.length ? list(g.rows) : h("p", { class: "hint" }, "이 분류에 연락처가 없어요.")));
-  document.getElementById("contacts").replaceChildren(
+  document.getElementById("contacts").replaceChildren(...[ // replaceChildren turns null / arrays into text: flatten and drop empties
     h("header", { class: "common-head" },
       h("h2", { id: "contacts-title" }, "연락처"),
       h("p", {}, contacts.length ? `${contacts.length}곳` : "업체명 · 이름 · 연락처 · 차량번호 · 직무 메모"),
@@ -1216,7 +1216,8 @@ function renderContacts() {
     bar,
     categoryPanel ? categoryPanelEl(cats) : null,
     adding ? h("ul", { class: "contact-list new-contact" }, contactEditor(null)) : null,
-    contacts.length || adding ? body : h("p", { class: "hint" }, "+ 를 눌러 업체 연락처를 적어 두세요."));
+    contacts.length || adding ? body : h("p", { class: "hint" }, "+ 를 눌러 업체 연락처를 적어 두세요."),
+  ].flat().filter(Boolean));
   if (focusContact) {
     focusContact = false;
     document.querySelector(".contact.is-editing .contact-input")?.focus();

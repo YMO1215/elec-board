@@ -1190,6 +1190,26 @@ function categoryPanelEl(cats) {
       h("button", { class: "text-btn", type: "button", onClick: () => { categoryPanel = false; render(); } }, "완료")));
 }
 
+/** Folded card: show the chips, the first group title and the FIRST ROW of contacts, clip the rest (and keep the clipped ones out of the tab order). */
+function fitContactsFold() {
+  const body = document.getElementById("contacts-body");
+  if (!body) return;
+  body.style.removeProperty("--fold-h"); // measure without the cap
+  for (const el of body.querySelectorAll(".contact[inert]")) el.inert = false;
+  if (!document.getElementById("contacts").classList.contains("is-folded")) return;
+  const tiles = [...body.querySelectorAll(".contact")];
+  if (!tiles.length) return;
+  const rowTop = tiles[0].getBoundingClientRect().top;
+  let bottom = 0;
+  for (const el of tiles) {
+    const r = el.getBoundingClientRect();
+    if (Math.abs(r.top - rowTop) < 2) bottom = Math.max(bottom, r.bottom);
+    else el.inert = true;
+  }
+  body.style.setProperty("--fold-h", `${Math.ceil(bottom - body.getBoundingClientRect().top)}px`);
+}
+window.addEventListener("resize", () => { if (view === "board") fitContactsFold(); });
+
 function renderContacts() {
   const contacts = state.contacts ?? [];
   const cats = state.categories ?? [];
@@ -1225,10 +1245,6 @@ function renderContacts() {
     open ? h("button", { class: "icon-btn add", type: "button", "aria-label": "연락처 추가", onClick: (e) => { e.stopPropagation(); openContactEditor("new"); } }, icon("plus")) : null,
     h("button", { class: "icon-btn fold", type: "button", "aria-expanded": String(open), "aria-controls": "contacts-body", "aria-label": open ? "연락처 접기" : "연락처 펼치기", onClick: (e) => { e.stopPropagation(); if (open) { contactEditing = null; categoryPanel = false; } setContactsOpen(!open); } }, icon("chevron-down")));
   head.addEventListener("click", () => { if (open) { contactEditing = null; categoryPanel = false; } setContactsOpen(!open); });
-  if (!open) {
-    section.replaceChildren(head);
-    return;
-  }
   section.replaceChildren(...[ // replaceChildren turns null / arrays into text: flatten and drop empties
     head,
     h("div", { id: "contacts-body" }, ...[
@@ -1238,6 +1254,7 @@ function renderContacts() {
     contacts.length || adding ? body : h("p", { class: "hint" }, "+ 를 눌러 업체 연락처를 적어 두세요."),
     ].flat().filter(Boolean)),
   ]);
+  fitContactsFold();
   if (focusContact) {
     focusContact = false;
     document.querySelector(".contact.is-editing .contact-input")?.focus();

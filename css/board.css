@@ -861,8 +861,8 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
   border: 0.5px solid var(--separator);
 }
 .contacts .common-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 12px; cursor: pointer; }
-.contacts.is-folded { padding-top: 10px; padding-bottom: 10px; }
-.contacts.is-folded .common-head { padding-bottom: 0; }
+/* folded: only the first row of contacts shows (height set by fitContactsFold) */
+.contacts.is-folded #contacts-body { max-height: var(--fold-h); overflow: hidden; }
 .contacts .fold .icon { transition: transform 0.25s var(--ease); }
 .contacts .fold[aria-expanded="true"] .icon { transform: rotate(180deg); }
 .contacts .hint { margin: 0; padding: 12px 8px 8px; text-align: center; color: var(--tertiary-label); font-size: 15px; line-height: 20px; }

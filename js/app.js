@@ -39,6 +39,13 @@ let editing = null; // { owner, id|null }
 let renaming = null; // person id
 let contactEditing = null; // 연락처 card: "new" | contact id | null
 let categoryPanel = false; // 연락처 분류 편집 panel open
+const CONTACTS_OPEN_KEY = "magnet-board:contacts-open";
+let contactsOpen = (() => { try { return storage.getItem(CONTACTS_OPEN_KEY) === "1"; } catch { return false; } })(); // the whole 연락처 card: folded to its title line unless opened
+function setContactsOpen(open) {
+  contactsOpen = open;
+  try { storage.setItem(CONTACTS_OPEN_KEY, open ? "1" : "0"); } catch { /* private mode: just remember for this visit */ }
+  render();
+}
 let contactFilter = "all"; // all | none | <category id>
 let dragging = false;
 const viewFromHash = () => (location.hash === "#trash" ? "trash" : location.hash === "#done" ? "done" : "board");
@@ -1069,6 +1076,7 @@ let focusContact = false; // put the caret into the open editor right after the 
 let focusCategory = false; // put the caret into the "새 분류" box after the next render
 
 function openContactEditor(id) {
+  contactsOpen = true;
   contactEditing = id;
   focusContact = true;
   render();
@@ -1208,16 +1216,28 @@ function renderContacts() {
   const body = shown.map((g) => h("section", { class: "contact-group" },
     g.name && (contactFilter === "all" || g.rows.length === 0) ? h("h3", { class: "contact-group-title" }, g.name, h("span", { class: "n" }, String(g.rows.length))) : null,
     g.rows.length ? list(g.rows) : h("p", { class: "hint" }, "이 분류에 연락처가 없어요.")));
-  document.getElementById("contacts").replaceChildren(...[ // replaceChildren turns null / arrays into text: flatten and drop empties
-    h("header", { class: "common-head" },
-      h("h2", { id: "contacts-title" }, "연락처"),
-      h("p", {}, contacts.length ? `${contacts.length}곳` : "업체명 · 이름 · 연락처 · 차량번호 · 직무 메모"),
-      h("button", { class: "icon-btn add", type: "button", "aria-label": "연락처 추가", onClick: () => openContactEditor("new") }, icon("plus"))),
+  const open = contactsOpen || Boolean(contactEditing) || categoryPanel; // never fold away an open editor
+  const section = document.getElementById("contacts");
+  section.classList.toggle("is-folded", !open);
+  const head = h("header", { class: "common-head" },
+    h("h2", { id: "contacts-title" }, "연락처"),
+    h("p", {}, contacts.length ? `${contacts.length}곳` : "업체명 · 이름 · 연락처 · 차량번호 · 직무 메모"),
+    open ? h("button", { class: "icon-btn add", type: "button", "aria-label": "연락처 추가", onClick: (e) => { e.stopPropagation(); openContactEditor("new"); } }, icon("plus")) : null,
+    h("button", { class: "icon-btn fold", type: "button", "aria-expanded": String(open), "aria-controls": "contacts-body", "aria-label": open ? "연락처 접기" : "연락처 펼치기", onClick: (e) => { e.stopPropagation(); if (open) { contactEditing = null; categoryPanel = false; } setContactsOpen(!open); } }, icon("chevron-down")));
+  head.addEventListener("click", () => { if (open) { contactEditing = null; categoryPanel = false; } setContactsOpen(!open); });
+  if (!open) {
+    section.replaceChildren(head);
+    return;
+  }
+  section.replaceChildren(...[ // replaceChildren turns null / arrays into text: flatten and drop empties
+    head,
+    h("div", { id: "contacts-body" }, ...[
     bar,
     categoryPanel ? categoryPanelEl(cats) : null,
     adding ? h("ul", { class: "contact-list new-contact" }, contactEditor(null)) : null,
     contacts.length || adding ? body : h("p", { class: "hint" }, "+ 를 눌러 업체 연락처를 적어 두세요."),
-  ].flat().filter(Boolean));
+    ].flat().filter(Boolean)),
+  ]);
   if (focusContact) {
     focusContact = false;
     document.querySelector(".contact.is-editing .contact-input")?.focus();

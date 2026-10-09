@@ -853,14 +853,18 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 
 .contacts {
   --c: var(--tint);
-  margin-top: var(--gap);
+  margin-bottom: var(--gap); /* sits above the lanes */
   min-width: 0;
   padding: 16px 12px 12px;
   border-radius: var(--r-lane);
   background: var(--secondary-background);
   border: 0.5px solid var(--separator);
 }
-.contacts .common-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 12px; }
+.contacts .common-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 12px; cursor: pointer; }
+.contacts.is-folded { padding-top: 10px; padding-bottom: 10px; }
+.contacts.is-folded .common-head { padding-bottom: 0; }
+.contacts .fold .icon { transition: transform 0.25s var(--ease); }
+.contacts .fold[aria-expanded="true"] .icon { transform: rotate(180deg); }
 .contacts .hint { margin: 0; padding: 12px 8px 8px; text-align: center; color: var(--tertiary-label); font-size: 15px; line-height: 20px; }
 .contact-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 8px; }
 .contact {

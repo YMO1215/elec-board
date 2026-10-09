@@ -879,6 +879,9 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .contact-name { font-size: 15px; line-height: 20px; color: var(--secondary-label); }
 .contact-phone { margin-top: 2px; font-size: 15px; line-height: 20px; color: var(--tint); text-decoration: none; font-variant-numeric: tabular-nums; }
 a.contact-phone:hover { text-decoration: underline; }
+.contact-car { margin-top: 2px; font-size: 15px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.contact-tag { margin-right: 6px; padding: 0 6px; border-radius: 6px; background: var(--fill-strong); color: var(--secondary-label); font-size: 12px; line-height: 18px; font-weight: 600; vertical-align: 1px; }
+.contact-body .contact-memo-text { margin-top: 6px; padding-top: 6px; border-top: 0.5px solid var(--separator); font-size: 14px; line-height: 19px; color: var(--secondary-label); white-space: pre-wrap; }
 .contact .tool { opacity: 1; flex: none; }
 .contact.is-editing { flex-direction: column; align-items: stretch; gap: 10px; }
 .contact-fields { display: grid; gap: 8px; }
@@ -895,6 +898,7 @@ a.contact-phone:hover { text-decoration: underline; }
   font-size: 17px;
   letter-spacing: inherit;
 }
+.contact-memo { min-height: 64px; padding: 10px 12px; resize: vertical; line-height: 22px; }
 .contact-input::placeholder { color: var(--tertiary-label); }
 .contact-actions { display: flex; align-items: center; gap: 4px; }
 .contact-actions .spacer { flex: 1; }

@@ -1031,6 +1031,8 @@ const CONTACT_FIELDS = [
   { key: "company", label: "업체명", type: "text", autocomplete: "organization" },
   { key: "name", label: "이름", type: "text", autocomplete: "name" },
   { key: "phone", label: "연락처", type: "tel", autocomplete: "tel" },
+  { key: "car", label: "차량번호", type: "text", autocomplete: "off" },
+  { key: "memo", label: "직무 메모", type: "textarea", max: 200 },
 ];
 let focusContact = false; // put the caret into the open editor right after the next render
 
@@ -1046,14 +1048,16 @@ function closeContactEditor() {
 }
 
 function contactEditor(contact) {
-  const inputs = CONTACT_FIELDS.map((f) => h("input", {
-    class: "contact-input", type: f.type, value: contact?.[f.key] ?? "", placeholder: f.label, maxlength: 60,
-    "aria-label": f.label, autocomplete: f.autocomplete, enterkeyhint: f.key === "phone" ? "done" : "next",
-  }));
+  const inputs = CONTACT_FIELDS.map((f) => (f.type === "textarea"
+    ? h("textarea", { class: "contact-input contact-memo", rows: 2, maxlength: f.max, placeholder: f.label, "aria-label": f.label }, contact?.[f.key] ?? "")
+    : h("input", {
+      class: "contact-input", type: f.type, value: contact?.[f.key] ?? "", placeholder: f.label, maxlength: 60,
+      "aria-label": f.label, autocomplete: f.autocomplete, enterkeyhint: "next",
+    })));
   const values = () => Object.fromEntries(CONTACT_FIELDS.map((f, i) => [f.key, inputs[i].value]));
   const submit = () => {
     const v = values();
-    if (!(v.company.trim() || v.name.trim() || v.phone.trim())) { toast("업체명, 이름, 연락처 중 하나는 적어 주세요"); inputs[0].focus(); return; }
+    if (!Object.values(v).some((x) => x.trim())) { toast("한 칸은 적어 주세요"); inputs[0].focus(); return; }
     contactEditing = null;
     commit(contact ? (s) => updateContact(s, contact.id, v) : (s) => addContact(s, { id, ...v }));
     render();
@@ -1061,12 +1065,13 @@ function contactEditor(contact) {
   const id = contact?.id ?? newId();
   for (const input of inputs) {
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); submit(); } // preventDefault: the same Enter must not click a button we move focus to
+      const memo = input.tagName === "TEXTAREA"; // 직무 메모: Enter = new line, Ctrl/Cmd+Enter = save
+      if (e.key === "Enter" && (!memo || e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } // preventDefault: the same Enter must not click a button we move focus to
       else if (e.key === "Escape") { e.preventDefault(); closeContactEditor(); }
     });
   }
   const del = contact
-    ? armed(h("button", { class: "text-btn danger", type: "button", "aria-label": `${contact.company || contact.name || contact.phone} 삭제` }, "삭제"), "정말 삭제",
+    ? armed(h("button", { class: "text-btn danger", type: "button", "aria-label": `${contact.company || contact.name || contact.phone || contact.car || contact.memo} 삭제` }, "삭제"), "정말 삭제",
       () => { contactEditing = null; commit((s) => removeContact(s, contact.id)); render(); })
     : null;
   return h("li", { class: "contact is-editing" },
@@ -1086,8 +1091,10 @@ function contactRow(contact) {
       contact.name ? h("p", { class: "contact-name" }, contact.name) : null,
       contact.phone ? (digits
         ? h("a", { class: "contact-phone", href: `tel:${digits}` }, contact.phone)
-        : h("p", { class: "contact-phone" }, contact.phone)) : null),
-    h("button", { class: "tool", type: "button", "aria-label": `${contact.company || contact.name || contact.phone} 고치기`, onClick: () => openContactEditor(contact.id) }, icon("edit")));
+        : h("p", { class: "contact-phone" }, contact.phone)) : null,
+      contact.car ? h("p", { class: "contact-car" }, h("span", { class: "contact-tag" }, "차량"), contact.car) : null,
+      contact.memo ? h("p", { class: "contact-memo-text" }, contact.memo) : null),
+    h("button", { class: "tool", type: "button", "aria-label": `${contact.company || contact.name || contact.phone || contact.car || contact.memo} 고치기`, onClick: () => openContactEditor(contact.id) }, icon("edit")));
 }
 
 function renderContacts() {
@@ -1096,7 +1103,7 @@ function renderContacts() {
   document.getElementById("contacts").replaceChildren(
     h("header", { class: "common-head" },
       h("h2", { id: "contacts-title" }, "연락처"),
-      h("p", {}, contacts.length ? `${contacts.length}곳` : "업체명 · 이름 · 연락처"),
+      h("p", {}, contacts.length ? `${contacts.length}곳` : "업체명 · 이름 · 연락처 · 차량번호 · 직무 메모"),
       h("button", { class: "icon-btn add", type: "button", "aria-label": "연락처 추가", onClick: () => openContactEditor("new") }, icon("plus"))),
     contacts.length || adding
       ? h("ul", { class: "contact-list" },

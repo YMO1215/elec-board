@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { MAX_CONTACTS, addContact, initialState, parse, removeContact, updateContact } from "../js/store.js";
 
-const one = { id: "c1", company: "한전KPS", name: "홍길동", phone: "010-1234-5678" };
+const one = { id: "c1", company: "한전KPS", name: "홍길동", phone: "010-1234-5678", car: "", memo: "" };
 
 test("a new board starts with no contacts; old boards without the field parse to an empty list", () => {
   assert.deepEqual(initialState().contacts, []);
@@ -46,4 +46,17 @@ test("the list is capped at MAX_CONTACTS", () => {
   let s = initialState();
   for (let i = 0; i < MAX_CONTACTS + 5; i += 1) s = addContact(s, { id: `c${i}`, company: `업체${i}` });
   assert.equal(s.contacts.length, MAX_CONTACTS);
+});
+
+test("차량번호 and 직무 메모 are stored, trimmed, capped, and old rows get empty values", () => {
+  let s = addContact(initialState(), { id: "c1", company: "A", car: " 12가 3456 ", memo: "  야간 담당\n비상시 먼저 연락  " });
+  assert.equal(s.contacts[0].car, "12가 3456");
+  assert.equal(s.contacts[0].memo, "야간 담당\n비상시 먼저 연락");
+  assert.equal(addContact(initialState(), { id: "c2", car: "34나 7890" }).contacts.length, 1); // a car number alone is enough
+  assert.equal(addContact(s, { id: "c3", memo: "x".repeat(500) }).contacts[1].memo.length, 200);
+  s = updateContact(s, "c1", { car: "56다 1111" });
+  assert.equal(s.contacts[0].car, "56다 1111");
+  assert.equal(s.contacts[0].memo, "야간 담당\n비상시 먼저 연락");
+  const legacy = { ...initialState(), contacts: [{ id: "old", company: "옛 업체", name: "", phone: "" }] };
+  assert.deepEqual(parse(JSON.stringify(legacy)).contacts[0], { id: "old", company: "옛 업체", name: "", phone: "", car: "", memo: "" });
 });

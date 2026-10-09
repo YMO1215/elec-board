@@ -228,26 +228,37 @@ export function removePhoto(state, taskId, photoId) {
 
 export const MAX_CONTACTS = 300;
 const MAX_CONTACT_FIELD = 60;
+const MAX_CONTACT_MEMO = 200;
+export const CONTACT_KEYS = ["company", "name", "phone", "car", "memo"]; // 업체명 · 이름 · 연락처 · 차량번호 · 직무 메모
 
-function cleanField(value) {
-  return String(value ?? "").trim().slice(0, MAX_CONTACT_FIELD);
+function cleanField(value, max = MAX_CONTACT_FIELD) {
+  return String(value ?? "").trim().slice(0, max);
 }
 
-/** 연락처 card: one row = 업체명 + 이름 + 연락처. A row needs at least one of the three. `id` is fixed by the caller so a retried op is identical. */
-export function addContact(state, { id, company, name, phone }) {
-  const row = { id, company: cleanField(company), name: cleanField(name), phone: cleanField(phone) };
+/** A contact row with every field cleaned (missing ones become ""). */
+function contactRow(id, src) {
+  const row = { id };
+  for (const key of CONTACT_KEYS) row[key] = cleanField(src?.[key], key === "memo" ? MAX_CONTACT_MEMO : MAX_CONTACT_FIELD);
+  return row;
+}
+
+const hasContent = (row) => CONTACT_KEYS.some((key) => row[key]);
+
+/** 연락처 card: one row = 업체명 + 이름 + 연락처 + 차량번호 + 직무 메모. A row needs at least one field. `id` is fixed by the caller so a retried op is identical. */
+export function addContact(state, input) {
   const contacts = state.contacts ?? [];
-  if (typeof id !== "string" || !id || !(row.company || row.name || row.phone) || contacts.length >= MAX_CONTACTS || contacts.some((c) => c.id === id)) return state;
-  return { ...state, contacts: [...contacts, row] };
+  const id = input?.id;
+  if (typeof id !== "string" || !id || contacts.length >= MAX_CONTACTS || contacts.some((c) => c.id === id)) return state;
+  const row = contactRow(id, input);
+  return hasContent(row) ? { ...state, contacts: [...contacts, row] } : state;
 }
 
 export function updateContact(state, id, patch) {
   const contacts = state.contacts ?? [];
   const old = contacts.find((c) => c.id === id);
   if (!old) return state;
-  const next = { ...old };
-  for (const key of ["company", "name", "phone"]) if (key in patch) next[key] = cleanField(patch[key]);
-  if (!(next.company || next.name || next.phone)) return state;
+  const next = contactRow(id, { ...old, ...patch });
+  if (!hasContent(next)) return state;
   return { ...state, contacts: contacts.map((c) => (c.id === id ? next : c)) };
 }
 
@@ -319,8 +330,8 @@ function cleanContacts(raw) {
   const out = [];
   for (const c of raw) {
     if (!c || typeof c.id !== "string" || !c.id || seen.has(c.id)) continue;
-    const row = { id: c.id, company: cleanField(c.company), name: cleanField(c.name), phone: cleanField(c.phone) };
-    if (!(row.company || row.name || row.phone)) continue;
+    const row = contactRow(c.id, c);
+    if (!hasContent(row)) continue;
     seen.add(c.id);
     out.push(row);
   }

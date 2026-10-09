@@ -14,7 +14,7 @@ const DEFAULT_PEOPLE = [
 ];
 
 export function initialState() {
-  return { version: 1, people: DEFAULT_PEOPLE.map((p) => ({ ...p })), tasks: [], contacts: [] };
+  return { version: 1, people: DEFAULT_PEOPLE.map((p) => ({ ...p })), tasks: [], contacts: [], categories: [] };
 }
 
 export function owners(state) {
@@ -246,11 +246,43 @@ export function formatPhone(value) {
   return rest.length <= mid ? `${d.slice(0, head)}-${rest}` : `${d.slice(0, head)}-${rest.slice(0, mid)}-${rest.slice(mid)}`;
 }
 
-/** A contact row with every field cleaned (missing ones become ""). */
-function contactRow(id, src) {
+/** A contact row with every field cleaned (missing ones become ""). `cat` must be one of `categories`, else "" (미분류). */
+function contactRow(id, src, categories = []) {
   const row = { id };
   for (const key of CONTACT_KEYS) row[key] = cleanField(src?.[key], key === "memo" ? MAX_CONTACT_MEMO : MAX_CONTACT_FIELD);
+  row.cat = categories.some((c) => c.id === src?.cat) ? src.cat : "";
   return row;
+}
+
+export const MAX_CATEGORIES = 20;
+const MAX_CATEGORY_NAME = 20;
+
+const cleanCategoryName = (name) => cleanField(name, MAX_CATEGORY_NAME);
+
+/** 연락처 분류 (e.g. 협력업체 · 관공서). `id` is fixed by the caller so a retried op is identical. */
+export function addCategory(state, { id, name }) {
+  const cats = state.categories ?? [];
+  const clean = cleanCategoryName(name);
+  if (typeof id !== "string" || !id || !clean || cats.length >= MAX_CATEGORIES || cats.some((c) => c.id === id || c.name === clean)) return state;
+  return { ...state, categories: [...cats, { id, name: clean }] };
+}
+
+export function renameCategory(state, id, name) {
+  const cats = state.categories ?? [];
+  const clean = cleanCategoryName(name);
+  if (!clean || !cats.some((c) => c.id === id) || cats.some((c) => c.name === clean)) return state; // unchanged or taken
+  return { ...state, categories: cats.map((c) => (c.id === id ? { ...c, name: clean } : c)) };
+}
+
+/** Removing a category keeps its contacts: they become 미분류. */
+export function removeCategory(state, id) {
+  const cats = state.categories ?? [];
+  if (!cats.some((c) => c.id === id)) return state;
+  return {
+    ...state,
+    categories: cats.filter((c) => c.id !== id),
+    contacts: (state.contacts ?? []).map((c) => (c.cat === id ? { ...c, cat: "" } : c)),
+  };
 }
 
 const hasContent = (row) => CONTACT_KEYS.some((key) => row[key]);
@@ -260,7 +292,7 @@ export function addContact(state, input) {
   const contacts = state.contacts ?? [];
   const id = input?.id;
   if (typeof id !== "string" || !id || contacts.length >= MAX_CONTACTS || contacts.some((c) => c.id === id)) return state;
-  const row = contactRow(id, input);
+  const row = contactRow(id, input, state.categories ?? []);
   return hasContent(row) ? { ...state, contacts: [...contacts, row] } : state;
 }
 
@@ -268,7 +300,7 @@ export function updateContact(state, id, patch) {
   const contacts = state.contacts ?? [];
   const old = contacts.find((c) => c.id === id);
   if (!old) return state;
-  const next = contactRow(id, { ...old, ...patch });
+  const next = contactRow(id, { ...old, ...patch }, state.categories ?? []);
   if (!hasContent(next)) return state;
   return { ...state, contacts: contacts.map((c) => (c.id === id ? next : c)) };
 }
@@ -335,13 +367,24 @@ function cleanPhotos(raw) {
     .slice(0, MAX_PHOTOS);
 }
 
-function cleanContacts(raw) {
+function cleanCategories(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const c of raw) {
+    const name = cleanCategoryName(c?.name);
+    if (!c || typeof c.id !== "string" || !c.id || !name || out.some((o) => o.id === c.id || o.name === name)) continue;
+    out.push({ id: c.id, name });
+  }
+  return out.slice(0, MAX_CATEGORIES);
+}
+
+function cleanContacts(raw, categories) {
   if (!Array.isArray(raw)) return [];
   const seen = new Set();
   const out = [];
   for (const c of raw) {
     if (!c || typeof c.id !== "string" || !c.id || seen.has(c.id)) continue;
-    const row = contactRow(c.id, c);
+    const row = contactRow(c.id, c, categories);
     if (!hasContent(row)) continue;
     seen.add(c.id);
     out.push(row);
@@ -369,7 +412,8 @@ export function parse(raw) {
         photos: cleanPhotos(t.photos),
         deletedAt: typeof t.deletedAt === "string" && ISO_TIME.test(t.deletedAt) ? t.deletedAt : null,
       }));
-    return { version: 1, people, tasks, contacts: cleanContacts(data.contacts) };
+    const categories = cleanCategories(data.categories);
+    return { version: 1, people, tasks, contacts: cleanContacts(data.contacts, categories), categories };
   } catch {
     return initialState();
   }

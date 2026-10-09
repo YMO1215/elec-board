@@ -5,7 +5,7 @@ import { icon } from "./icons.js";
 import { openCalendar } from "./calendar.js";
 import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
-  COMMON, MAX_PHOTOS, MAX_TEXT, REGULAR, STORAGE_KEY, addContact, addPhoto, addTask, formatPhone, removeContact, updateContact, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee,
+  COMMON, MAX_PHOTOS, MAX_TEXT, REGULAR, STORAGE_KEY, addCategory, addContact, addPhoto, addTask, formatPhone, removeCategory, removeContact, renameCategory, updateContact, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee,
   activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
   DONE_FOLDER_DAYS, PHOTO_MONTHS, doneFolderCutoff, doneFolderDaysLeft, dropPhotos, expiredPhotos, photoCutoff, photoUrlsOf,
   TRASH_DAYS, removePhoto, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
@@ -13,6 +13,7 @@ import {
 import { POLL_MS, createSync } from "./sync.js";
 import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
 import { makeZip } from "./zip.js";
+import { fetchUsage, usageEl } from "./usage.js";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const DRAG_THRESHOLD = 3;
@@ -37,6 +38,8 @@ let state = local; // what the screen shows
 let editing = null; // { owner, id|null }
 let renaming = null; // person id
 let contactEditing = null; // 연락처 card: "new" | contact id | null
+let categoryPanel = false; // 연락처 분류 편집 panel open
+let contactFilter = "all"; // all | none | <category id>
 let dragging = false;
 const viewFromHash = () => (location.hash === "#trash" ? "trash" : location.hash === "#done" ? "done" : "board");
 let view = viewFromHash(); // board | done | trash (trash lives inside the 완료 screen)
@@ -59,7 +62,7 @@ let quiet = false; // a change whose result is already on screen (the user just 
 let pendingRender = false; // a redraw was skipped while the user was busy
 
 function busy() {
-  return Boolean(dragging || editing || renaming || contactEditing || typingInNote());
+  return Boolean(dragging || editing || renaming || contactEditing || categoryPanel || typingInNote());
 }
 
 function refresh() {
@@ -262,6 +265,7 @@ async function addPhotos(taskId, files) {
     }
   }
   if (added) toast(added > 1 ? `사진 ${added}장을 붙였어요` : "사진을 붙였어요");
+  refreshUsage();
 }
 
 // The album (사진첩): one folder per task (card name). Photos are named by shooting time.
@@ -279,12 +283,23 @@ function photoMark(task) {
   }, icon("album", 14), h("span", {}, String(n)));
 }
 
+// Free Vercel Blob storage left (the photo album's files). Fetched on start, after uploads and when the album opens/closes.
+let usage = null;
+async function refreshUsage() {
+  try { usage = await fetchUsage(boardKey); } catch { usage = null; } // local-only mode / storage not connected: hide the meter
+  const box = document.getElementById("usage");
+  box.replaceChildren(...(usage ? [usageEl(usage)] : []));
+  box.hidden = !usage;
+  fillAlbum();
+}
+
 function openAlbum(focusId = null) {
   if (albumDialog) return;
+  refreshUsage();
   const dialog = h("dialog", { class: "cal album", "aria-label": "사진첩" });
   albumDialog = dialog;
   wireDialog(dialog);
-  dialog.addEventListener("close", () => { albumDialog = null; dialog.remove(); });
+  dialog.addEventListener("close", () => { albumDialog = null; dialog.remove(); refreshUsage(); });
   document.body.append(dialog);
   fillAlbum();
   dialog.showModal();
@@ -481,6 +496,7 @@ function fillAlbum() {
     h("header", { class: "album-head" },
       h("h2", { class: "cal-title" }, "사진첩"),
       h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: () => animateClose(albumDialog) }, icon("x"))),
+    usage ? usageEl(usage) : null,
     h("p", { class: "album-note" }, `폴더를 오른쪽에서 왼쪽으로 밀면 삭제 버튼이 나와요. 사진은 올린 지 ${PHOTO_MONTHS}개월이 지나면, 완료한 업무의 사진은 ${DONE_FOLDER_DAYS}일이 지나면 자동으로 지워져요.`),
     active.length ? ownerCards(active) : h("p", { class: "folder-empty" }, "진행 중인 업무를 추가하면 여기에 폴더가 생겨요"),
     finished.length ? doneFolders(finished) : null));
@@ -1050,6 +1066,7 @@ const CONTACT_FIELDS = [
   { key: "memo", label: "직무 메모", type: "textarea", max: 200 },
 ];
 let focusContact = false; // put the caret into the open editor right after the next render
+let focusCategory = false; // put the caret into the "새 분류" box after the next render
 
 function openContactEditor(id) {
   contactEditing = id;
@@ -1063,6 +1080,8 @@ function closeContactEditor() {
 }
 
 function contactEditor(contact) {
+  const cats = state.categories ?? [];
+  let cat = contact ? contact.cat : cats.some((c) => c.id === contactFilter) ? contactFilter : ""; // a new contact starts in the category being viewed
   const inputs = CONTACT_FIELDS.map((f) => (f.type === "textarea"
     ? h("textarea", { class: "contact-input contact-memo", rows: 2, maxlength: f.max, placeholder: f.label, "aria-label": f.label }, contact?.[f.key] ?? "")
     : h("input", {
@@ -1077,10 +1096,20 @@ function contactEditor(contact) {
     for (let seen = 0; caret < el.value.length && seen < digitsBeforeCaret; caret += 1) if (/\d/.test(el.value[caret])) seen += 1;
     el.setSelectionRange(caret, caret);
   });
+  const picker = cats.length
+    ? h("div", { class: "contact-cats", role: "group", "aria-label": "분류" },
+      [{ id: "", name: "분류 없음" }, ...cats].map((c) => h("button", {
+        class: "chip sm", type: "button", "aria-pressed": String(c.id === cat),
+        onClick: (e) => {
+          cat = c.id;
+          for (const b of e.currentTarget.parentElement.children) b.setAttribute("aria-pressed", String(b === e.currentTarget));
+        },
+      }, c.name)))
+    : null;
   const values = () => Object.fromEntries(CONTACT_FIELDS.map((f, i) => [f.key, inputs[i].value]));
   const submit = () => {
-    const v = values();
-    if (!Object.values(v).some((x) => x.trim())) { toast("한 칸은 적어 주세요"); inputs[0].focus(); return; }
+    const v = { ...values(), cat };
+    if (!CONTACT_FIELDS.some((f) => v[f.key].trim())) { toast("한 칸은 적어 주세요"); inputs[0].focus(); return; }
     contactEditing = null;
     commit(contact ? (s) => updateContact(s, contact.id, v) : (s) => addContact(s, { id, ...v }));
     render();
@@ -1094,10 +1123,11 @@ function contactEditor(contact) {
     });
   }
   const del = contact
-    ? armed(h("button", { class: "text-btn danger", type: "button", "aria-label": `${contact.company || contact.name || contact.phone || contact.car || contact.memo} 삭제` }, "삭제"), "정말 삭제",
+    ? armed(h("button", { class: "text-btn danger", type: "button", "aria-label": `${contactLabel(contact)} 삭제` }, "삭제"), "정말 삭제",
       () => { contactEditing = null; commit((s) => removeContact(s, contact.id)); render(); })
     : null;
   return h("li", { class: "contact is-editing" },
+    picker,
     h("div", { class: "contact-fields" }, inputs),
     h("div", { class: "contact-actions" },
       del,
@@ -1105,6 +1135,8 @@ function contactEditor(contact) {
       h("button", { class: "text-btn quiet", type: "button", onClick: closeContactEditor }, "취소"),
       h("button", { class: "text-btn", type: "button", onClick: submit }, "저장")));
 }
+
+const contactLabel = (c) => c.company || c.name || c.phone || c.car || c.memo;
 
 function contactRow(contact) {
   const digits = contact.phone.replace(/[^\d+]/g, "");
@@ -1117,25 +1149,80 @@ function contactRow(contact) {
         : h("p", { class: "contact-phone" }, contact.phone)) : null,
       contact.car ? h("p", { class: "contact-car" }, h("span", { class: "contact-tag" }, "차량"), contact.car) : null,
       contact.memo ? h("p", { class: "contact-memo-text" }, contact.memo) : null),
-    h("button", { class: "tool", type: "button", "aria-label": `${contact.company || contact.name || contact.phone || contact.car || contact.memo} 고치기`, onClick: () => openContactEditor(contact.id) }, icon("edit")));
+    h("button", { class: "tool", type: "button", "aria-label": `${contactLabel(contact)} 고치기`, onClick: () => openContactEditor(contact.id) }, icon("edit")));
+}
+
+/** 분류 편집: rename / delete each category, add a new one. Deleting keeps the contacts (they become 미분류). */
+function categoryPanelEl(cats) {
+  const rows = cats.map((c) => {
+    const input = h("input", { class: "contact-input", type: "text", value: c.name, maxlength: 20, "aria-label": `${c.name} 분류 이름` });
+    input.addEventListener("change", () => {
+      if (!input.value.trim()) { input.value = c.name; return; }
+      commit((s) => renameCategory(s, c.id, input.value)); // the chips follow when the panel closes
+    });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); input.blur(); } });
+    return h("div", { class: "cat-row" }, input,
+      armed(h("button", { class: "text-btn danger", type: "button", "aria-label": `${c.name} 분류 삭제` }, "삭제"), "정말 삭제",
+        () => { if (contactFilter === c.id) contactFilter = "all"; commit((s) => removeCategory(s, c.id)); render(); }));
+  });
+  const fresh = h("input", { class: "contact-input cat-new", type: "text", maxlength: 20, placeholder: "새 분류 이름 (예: 협력업체)", "aria-label": "새 분류 이름" });
+  const add = () => {
+    const name = fresh.value.trim();
+    if (!name) { fresh.focus(); return; }
+    if (cats.some((c) => c.name === name)) { toast("같은 이름의 분류가 있어요"); fresh.focus(); return; }
+    const id = newId(); // fixed outside the op so a retried op is identical
+    commit((s) => addCategory(s, { id, name }));
+    focusCategory = true;
+    render();
+  };
+  fresh.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+  return h("div", { class: "cat-panel" }, rows,
+    h("div", { class: "cat-row" }, fresh, h("button", { class: "text-btn", type: "button", onClick: add }, "추가")),
+    h("div", { class: "cat-row" }, h("span", { class: "spacer" }),
+      h("button", { class: "text-btn", type: "button", onClick: () => { categoryPanel = false; render(); } }, "완료")));
 }
 
 function renderContacts() {
   const contacts = state.contacts ?? [];
+  const cats = state.categories ?? [];
+  if (contactFilter !== "all" && contactFilter !== "none" && !cats.some((c) => c.id === contactFilter)) contactFilter = "all"; // that category is gone
+  if (contactFilter === "none" && !cats.length) contactFilter = "all";
   const adding = contactEditing === "new";
+  const groups = cats.length
+    ? [...cats.map((c) => ({ id: c.id, name: c.name, rows: contacts.filter((x) => x.cat === c.id) })), { id: "none", name: "미분류", rows: contacts.filter((x) => !x.cat) }]
+    : [{ id: "all", name: null, rows: contacts }];
+  const shown = contactFilter === "all" ? groups.filter((g) => g.rows.length || contactEditing && g.rows.some((x) => x.id === contactEditing)) : groups.filter((g) => g.id === contactFilter);
+  const chip = (id, label, n) => h("button", {
+    class: "chip", type: "button", "aria-pressed": String(contactFilter === id),
+    onClick: () => { contactFilter = id; render(); },
+  }, label, h("span", { class: "n" }, String(n)));
+  const bar = cats.length
+    ? h("div", { class: "contact-bar", role: "group", "aria-label": "분류" },
+      chip("all", "전체", contacts.length),
+      cats.map((c) => chip(c.id, c.name, contacts.filter((x) => x.cat === c.id).length)),
+      contacts.some((x) => !x.cat) ? chip("none", "미분류", contacts.filter((x) => !x.cat).length) : null,
+      h("button", { class: "text-btn chip-edit", type: "button", "aria-expanded": String(categoryPanel), onClick: () => { categoryPanel = !categoryPanel; focusCategory = categoryPanel; render(); } }, "분류 편집"))
+    : h("div", { class: "contact-bar" },
+      h("button", { class: "text-btn chip-edit", type: "button", "aria-expanded": String(categoryPanel), onClick: () => { categoryPanel = !categoryPanel; focusCategory = categoryPanel; render(); } }, "+ 분류 만들기"));
+  const list = (rows) => h("ul", { class: "contact-list" }, rows.map((c) => (contactEditing === c.id ? contactEditor(c) : contactRow(c))));
+  const body = shown.map((g) => h("section", { class: "contact-group" },
+    g.name && (contactFilter === "all" || g.rows.length === 0) ? h("h3", { class: "contact-group-title" }, g.name, h("span", { class: "n" }, String(g.rows.length))) : null,
+    g.rows.length ? list(g.rows) : h("p", { class: "hint" }, "이 분류에 연락처가 없어요.")));
   document.getElementById("contacts").replaceChildren(
     h("header", { class: "common-head" },
       h("h2", { id: "contacts-title" }, "연락처"),
       h("p", {}, contacts.length ? `${contacts.length}곳` : "업체명 · 이름 · 연락처 · 차량번호 · 직무 메모"),
       h("button", { class: "icon-btn add", type: "button", "aria-label": "연락처 추가", onClick: () => openContactEditor("new") }, icon("plus"))),
-    contacts.length || adding
-      ? h("ul", { class: "contact-list" },
-        contacts.map((c) => (contactEditing === c.id ? contactEditor(c) : contactRow(c))),
-        adding ? contactEditor(null) : null)
-      : h("p", { class: "hint" }, "+ 를 눌러 업체 연락처를 적어 두세요."));
+    bar,
+    categoryPanel ? categoryPanelEl(cats) : null,
+    adding ? h("ul", { class: "contact-list new-contact" }, contactEditor(null)) : null,
+    contacts.length || adding ? body : h("p", { class: "hint" }, "+ 를 눌러 업체 연락처를 적어 두세요."));
   if (focusContact) {
     focusContact = false;
     document.querySelector(".contact.is-editing .contact-input")?.focus();
+  } else if (focusCategory) {
+    focusCategory = false;
+    document.querySelector(".cat-new")?.focus();
   }
 }
 
@@ -1342,6 +1429,7 @@ async function connect() {
   const shared = await sync.start(local);
   purgeExpiredTrash(); // after start, so a shared board is cleaned on the server copy, not the local one
   sweepPhotos();
+  refreshUsage();
   setInterval(() => { if (!busy()) { purgeExpiredTrash(); sweepPhotos(); } }, PURGE_MS);
   if (!shared) return;
   setInterval(() => { if (!document.hidden && !busy()) sync.poll(); }, POLL_MS);

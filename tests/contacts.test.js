@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MAX_CONTACTS, addContact, formatPhone, initialState, parse, removeContact, updateContact } from "../js/store.js";
+import { MAX_CONTACTS, addCategory, addContact, formatPhone, initialState, parse, removeCategory, removeContact, renameCategory, updateContact } from "../js/store.js";
 
-const one = { id: "c1", company: "한전KPS", name: "홍길동", phone: "010-1234-5678", car: "", memo: "" };
+const one = { id: "c1", company: "한전KPS", name: "홍길동", phone: "010-1234-5678", car: "", memo: "", cat: "" };
 
 test("a new board starts with no contacts; old boards without the field parse to an empty list", () => {
   assert.deepEqual(initialState().contacts, []);
@@ -58,7 +58,7 @@ test("차량번호 and 직무 메모 are stored, trimmed, capped, and old rows g
   assert.equal(s.contacts[0].car, "56다 1111");
   assert.equal(s.contacts[0].memo, "야간 담당\n비상시 먼저 연락");
   const legacy = { ...initialState(), contacts: [{ id: "old", company: "옛 업체", name: "", phone: "" }] };
-  assert.deepEqual(parse(JSON.stringify(legacy)).contacts[0], { id: "old", company: "옛 업체", name: "", phone: "", car: "", memo: "" });
+  assert.deepEqual(parse(JSON.stringify(legacy)).contacts[0], { id: "old", company: "옛 업체", name: "", phone: "", car: "", memo: "", cat: "" });
 });
 
 test("formatPhone keeps digits only and places hyphens while typing", () => {
@@ -68,4 +68,35 @@ test("formatPhone keeps digits only and places hyphens while typing", () => {
     ["021234567", "02-123-4567"], ["0212345678", "02-1234-5678"], ["0311234567", "031-123-4567"], ["03112345678", "031-1234-5678"],
   ];
   for (const [input, want] of cases) assert.equal(formatPhone(input), want, JSON.stringify(input));
+});
+
+test("categories: add / rename / remove, with unique names and a cap", () => {
+  let s = addCategory(initialState(), { id: "k1", name: " 협력업체 " });
+  assert.deepEqual(s.categories, [{ id: "k1", name: "협력업체" }]);
+  assert.equal(addCategory(s, { id: "k2", name: "협력업체" }), s); // same name
+  assert.equal(addCategory(s, { id: "k1", name: "다른" }), s); // same id
+  assert.equal(addCategory(s, { id: "k3", name: "  " }), s);
+  s = addCategory(s, { id: "k2", name: "관공서" });
+  assert.equal(renameCategory(s, "k2", "관청").categories[1].name, "관청");
+  assert.equal(renameCategory(s, "k2", "협력업체"), s); // name taken
+  assert.equal(renameCategory(s, "zzz", "x"), s);
+  let t = initialState();
+  for (let i = 0; i < 25; i += 1) t = addCategory(t, { id: `k${i}`, name: `분류${i}` });
+  assert.equal(t.categories.length, 20);
+});
+
+test("a contact keeps its category; unknown categories fall back to 미분류; removing a category keeps the contacts", () => {
+  let s = addCategory(initialState(), { id: "k1", name: "협력업체" });
+  s = addContact(s, { id: "c1", company: "A", cat: "k1" });
+  s = addContact(s, { id: "c2", company: "B", cat: "nope" });
+  assert.deepEqual(s.contacts.map((c) => c.cat), ["k1", ""]);
+  s = updateContact(s, "c2", { cat: "k1" });
+  assert.equal(s.contacts[1].cat, "k1");
+  assert.deepEqual(parse(JSON.stringify(s)).contacts.map((c) => c.cat), ["k1", "k1"]);
+  const gone = removeCategory(s, "k1");
+  assert.deepEqual(gone.categories, []);
+  assert.deepEqual(gone.contacts.map((c) => [c.company, c.cat]), [["A", ""], ["B", ""]]);
+  assert.equal(removeCategory(s, "zzz"), s);
+  // a board saved before categories existed
+  assert.deepEqual(parse(JSON.stringify({ ...initialState(), categories: undefined })).categories, []);
 });

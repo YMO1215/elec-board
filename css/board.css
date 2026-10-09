@@ -904,6 +904,46 @@ a.contact-phone:hover { text-decoration: underline; }
 .contact-actions .spacer { flex: 1; }
 .text-btn.quiet { color: var(--secondary-label); }
 
+/* 연락처 분류: filter chips, edit panel, group headings */
+.contact-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 4px 12px; }
+.chip {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0.5px solid var(--separator);
+  border-radius: 16px;
+  background: var(--fill);
+  color: var(--label);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+  transition: background-color 0.2s var(--ease), color 0.2s var(--ease), transform 0.2s var(--ease);
+}
+.chip:active { transform: scale(0.97); }
+.chip[aria-pressed="true"] { background: var(--tint); border-color: transparent; color: #fff; }
+.chip .n { margin-left: 6px; opacity: 0.7; font-size: 13px; font-variant-numeric: tabular-nums; }
+.chip.sm { min-height: 28px; padding: 0 10px; font-size: 14px; line-height: 18px; }
+.chip-edit { margin-left: auto; color: var(--secondary-label); }
+.contact-cats { display: flex; flex-wrap: wrap; gap: 6px; }
+.cat-panel { display: grid; gap: 8px; margin: 0 4px 12px; padding: 12px; border-radius: var(--r-card); background: var(--fill); }
+.cat-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cat-row .contact-input { flex: 1; }
+.cat-row .spacer { flex: 1; }
+.contact-group + .contact-group { margin-top: 14px; }
+.contact-group-title { margin: 0 4px 8px; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--secondary-label); }
+.contact-group-title .n { margin-left: 6px; color: var(--tertiary-label); font-variant-numeric: tabular-nums; }
+.contacts .new-contact { margin-bottom: 14px; }
+
+/* free-storage meter (album + page footer) */
+.usage { margin-top: var(--gap); }
+.usage-meter { padding: 12px 14px; border-radius: var(--r-card); background: var(--secondary-background); border: 0.5px solid var(--separator); --meter: var(--success); }
+.album .usage-meter { margin: 0 0 12px; background: var(--fill); border: 0; }
+.usage-meter.tone-mid { --meter: var(--warning); }
+.usage-meter.tone-high { --meter: var(--destructive); }
+.usage-title { margin: 0 0 8px; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--secondary-label); }
+.usage-bar { height: 8px; border-radius: 4px; background: var(--fill-strong); overflow: hidden; }
+.usage-bar span { display: block; height: 100%; border-radius: 4px; background: var(--meter); }
+.usage-text { margin: 8px 0 0; font-size: 13px; line-height: 18px; color: var(--secondary-label); font-variant-numeric: tabular-nums; }
+
 /* ---------------------------------------------------------------- completed list */
 
 .done-view { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); align-items: start; }

@@ -1138,18 +1138,38 @@ function contactEditor(contact) {
 
 const contactLabel = (c) => c.company || c.name || c.phone || c.car || c.memo;
 
+const openContacts = new Set(); // contacts shown unfolded (per session)
+
+/** One line (업체명 · 이름) with a fold button at the right end; unfolding shows phone, car, memo and 고치기. */
 function contactRow(contact) {
   const digits = contact.phone.replace(/[^\d+]/g, "");
-  return h("li", { class: "contact" },
+  const open = openContacts.has(contact.id);
+  const label = contactLabel(contact);
+  const details = h("div", { class: "contact-details", hidden: !open },
     h("div", { class: "contact-body" },
-      contact.company ? h("p", { class: "contact-company" }, contact.company) : null,
-      contact.name ? h("p", { class: "contact-name" }, contact.name) : null,
       contact.phone ? (digits
         ? h("a", { class: "contact-phone", href: `tel:${digits}` }, contact.phone)
         : h("p", { class: "contact-phone" }, contact.phone)) : null,
       contact.car ? h("p", { class: "contact-car" }, h("span", { class: "contact-tag" }, "차량"), contact.car) : null,
       contact.memo ? h("p", { class: "contact-memo-text" }, contact.memo) : null),
-    h("button", { class: "tool", type: "button", "aria-label": `${contactLabel(contact)} 고치기`, onClick: () => openContactEditor(contact.id) }, icon("edit")));
+    h("div", { class: "contact-actions" },
+      h("span", { class: "spacer" }),
+      h("button", { class: "text-btn", type: "button", "aria-label": `${label} 고치기`, onClick: () => openContactEditor(contact.id) }, icon("edit", 16), "고치기")));
+  const toggle = h("button", { class: "tool contact-toggle", type: "button", "aria-expanded": String(open), "aria-label": `${label} ${open ? "접기" : "펼치기"}` }, icon("chevron-down"));
+  const head = h("div", { class: "contact-head" },
+    h("p", { class: "contact-line" },
+      contact.company ? h("span", { class: "contact-company" }, contact.company) : null,
+      contact.name ? h("span", { class: "contact-name" }, contact.name) : null,
+      contact.company || contact.name ? null : h("span", { class: "contact-company" }, label)),
+    toggle);
+  head.addEventListener("click", () => {
+    const now = details.hidden; // hidden -> opening
+    details.hidden = !now;
+    if (now) openContacts.add(contact.id); else openContacts.delete(contact.id);
+    toggle.setAttribute("aria-expanded", String(now));
+    toggle.setAttribute("aria-label", `${label} ${now ? "접기" : "펼치기"}`);
+  });
+  return h("li", { class: "contact is-row" }, head, details);
 }
 
 /** 분류 편집: rename / delete each category, add a new one. Deleting keeps the contacts (they become 미분류). */

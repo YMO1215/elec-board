@@ -879,6 +879,18 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .contact-name { font-size: 15px; line-height: 20px; color: var(--secondary-label); }
 .contact-phone { margin-top: 2px; font-size: 15px; line-height: 20px; color: var(--tint); text-decoration: none; font-variant-numeric: tabular-nums; }
 a.contact-phone:hover { text-decoration: underline; }
+/* folded contact: one line + a fold button at the right end */
+.contact-list { align-items: start; }
+.contact.is-row { display: block; padding: 0; }
+.contact-head { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 6px 6px 12px; cursor: pointer; }
+.contact-line { flex: 1; min-width: 0; margin: 0; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; overflow: hidden; }
+.contact-line .contact-company { flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; font-size: 17px; line-height: 22px; font-weight: 600; }
+.contact-line .contact-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 15px; line-height: 20px; color: var(--secondary-label); }
+.contact-toggle .icon { transition: transform 0.25s var(--ease); }
+.contact-toggle[aria-expanded="true"] .icon { transform: rotate(180deg); }
+.contact-details { padding: 0 12px 10px; }
+.contact-details .contact-body > :first-child { margin-top: 0; }
+.contact-details .contact-actions .text-btn .icon { display: inline-block; }
 .contact-car { margin-top: 2px; font-size: 15px; line-height: 20px; font-variant-numeric: tabular-nums; }
 .contact-tag { margin-right: 6px; padding: 0 6px; border-radius: 6px; background: var(--fill-strong); color: var(--secondary-label); font-size: 12px; line-height: 18px; font-weight: 600; vertical-align: 1px; }
 .contact-body .contact-memo-text { margin-top: 6px; padding-top: 6px; border-top: 0.5px solid var(--separator); font-size: 14px; line-height: 19px; color: var(--secondary-label); white-space: pre-wrap; }

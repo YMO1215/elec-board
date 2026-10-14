@@ -1098,7 +1098,8 @@ dialog.cal { width: min(560px, calc(100vw - 20px)); max-height: calc(100dvh - 20
 .day .num { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .day.is-today .num { background: var(--tint); color: #fff; }
 .day .chips { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 0 3px; }
-.chip { display: block; min-width: 22px; padding: 0 4px; border-radius: 5px; font-size: 11px; font-weight: 700; line-height: 14px; text-align: center; }
+/* scoped to the calendar: the contacts category chips share the .chip name and force min-height 32px */
+.day .chip, .cal-line .chip { display: block; min-width: 22px; min-height: 0; padding: 0 4px; border: 0; border-radius: 5px; font-size: 11px; font-weight: 700; line-height: 14px; text-align: center; }
 .chip.s-day { background: color-mix(in srgb, var(--c) 72%, #000); color: #fff; }
 .chip.s-night { background: color-mix(in srgb, var(--c) 40%, #000); color: #fff; box-shadow: inset 0 0 0 1.5px var(--c); }
 .chip.s-off { background: color-mix(in srgb, var(--c) 14%, transparent); color: var(--secondary-label); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 55%, transparent); }

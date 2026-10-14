@@ -561,6 +561,42 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 }
 body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 
+/* lane reorder: the avatar is the handle; a lifted copy of the lane header follows the pointer */
+.lane-handle { cursor: grab; touch-action: none; position: relative; }
+.lane-handle::after { content: ""; position: absolute; inset: -8px; } /* 44px touch target */
+.lane-handle:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.lane-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 50;
+  pointer-events: none;
+  padding: 12px 12px 12px 16px;
+  border-radius: var(--r-lane);
+  background: var(--secondary-background);
+  border: 0.5px solid var(--separator);
+  box-shadow: var(--shadow-lift);
+}
+.lane-ghost .lane-head { margin: 0; padding: 0; border: 0; }
+.lane-ghost.is-snapping { transition: transform var(--snap) var(--ease), box-shadow var(--snap) var(--ease); box-shadow: none; }
+.placeholder.lane-ph { border-radius: var(--r-lane); }
+
+/* 시민박명 line on top of 이강현's list: informational, not a task */
+.twilight {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 8px 12px;
+  border-radius: var(--r-card);
+  border: 0.5px dashed var(--separator);
+  color: var(--secondary-label);
+  font-size: 13px;
+  line-height: 18px;
+}
+.twilight-time { color: var(--label); font-weight: 600; font-variant-numeric: tabular-nums; }
+.twilight-site { color: var(--tertiary-label); }
+
 /* editor */
 .note.is-editing { background: var(--secondary-background); }
 .note.is-editing .magnet { cursor: default; }

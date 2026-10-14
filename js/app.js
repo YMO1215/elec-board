@@ -5,7 +5,7 @@ import { icon } from "./icons.js";
 import { openCalendar } from "./calendar.js";
 import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
-  COMMON, MAX_PHOTOS, MAX_TEXT, REGULAR, STORAGE_KEY, addCategory, addContact, addPhoto, addTask, formatPhone, removeCategory, removeContact, renameCategory, updateContact, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee,
+  COMMON, MAX_PHOTOS, MAX_TEXT, REGULAR, STORAGE_KEY, addCategory, addContact, addPhoto, addTask, formatPhone, removeCategory, removeContact, renameCategory, updateContact, load, moveTask, newId, owners, parse, removeTask, renamePerson, setAssignee, movePerson,
   activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
   DONE_FOLDER_DAYS, PHOTO_MONTHS, doneFolderCutoff, doneFolderDaysLeft, dropPhotos, expiredPhotos, photoCutoff, photoUrlsOf,
   TRASH_DAYS, removePhoto, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
@@ -13,6 +13,7 @@ import {
 import { POLL_MS, createSync } from "./sync.js";
 import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
 import { makeZip } from "./zip.js";
+import { SITE, twilightText } from "./twilight.js";
 import { fetchUsage, usageEl } from "./usage.js";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -602,6 +603,27 @@ function avatar(cls, name, small = false) {
   return h("span", { class: `avatar ${cls}${small ? " sm" : ""}`, "aria-hidden": "true" }, initialOf(name));
 }
 
+/** The lane's avatar doubles as its drag handle (arrow keys work too); the lane order is saved the moment it changes. */
+function laneHandle(person) {
+  const el = avatar(person.id, person.name);
+  el.classList.add("lane-handle");
+  el.removeAttribute("aria-hidden");
+  el.setAttribute("role", "button");
+  el.setAttribute("tabindex", "0");
+  el.setAttribute("title", "끌어서 칸 순서 바꾸기");
+  el.setAttribute("aria-label", `${person.name} 칸 — 끌거나 방향키로 순서 바꾸기`);
+  el.addEventListener("pointerdown", (e) => beginLaneDrag(e, person.id));
+  el.addEventListener("keydown", (e) => {
+    const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const at = state.people.findIndex((p) => p.id === person.id);
+    commit((s) => movePerson(s, person.id, at + step));
+    document.querySelector(`.lane.${person.id} .lane-handle`)?.focus();
+  });
+  return el;
+}
+
 /** Tap-to-move path for touch screens (dragging stays available): a sheet with the four people + common. */
 function openMoveSheet(task) {
   const targets = [...state.people.map((p) => ({ id: p.id, cls: p.id, name: p.name })), ...sharedTargets()];
@@ -795,9 +817,22 @@ function editorEl(owner, task) {
 const seen = new Set();
 let firstPaint = true;
 
+// 시민박명: a fixed line (not a task — no `.note`, so counts, drag and storage ignore it) on top of 이강현's list.
+// Computed for today's date on every render, so it changes by itself each day.
+const TWILIGHT_OWNER = "p4";
+
+function twilightEl() {
+  const t = twilightText(todayIso());
+  return h("div", { class: "twilight", role: "listitem", title: `${SITE.name} 기준 시민박명 (태양 고도 -6°)` },
+    h("span", { class: "twilight-label" }, "시민박명"),
+    h("span", { class: "twilight-time" }, t ? `${t.dawn} ~ ${t.dusk}` : "—"),
+    h("span", { class: "twilight-site" }, SITE.name));
+}
+
 function dropZone(owner, layout) {
   const tasks = activeOf(state, owner);
   const zone = h("div", { class: "drop", dataset: { owner, layout }, role: "list", "aria-label": `${ownerName(owner)} 업무` });
+  if (owner === TWILIGHT_OWNER) zone.append(twilightEl());
   if (editing && editing.owner === owner && !editing.id) zone.append(editorEl(owner, null));
   for (const t of tasks) {
     const el = editing && editing.id === t.id ? editorEl(owner, t) : noteEl(t);
@@ -1015,7 +1050,7 @@ function render() {
     setCount(count, p.id, n);
     const lane = h("section", { class: `lane ${p.id}${folded.has(p.id) ? " is-collapsed" : ""}`, "aria-label": `${p.name}의 칸` },
       h("header", { class: "lane-head" },
-        avatar(p.id, p.name),
+        laneHandle(p),
         nameEl(p),
         count,
         h("button", { class: "icon-btn add", type: "button", "aria-label": `${p.name}에게 업무 추가`, onClick: () => startEdit(p.id, null) }, icon("plus")),
@@ -1426,6 +1461,99 @@ function beginDrag(e, id) {
   window.addEventListener("keydown", onKey);
 }
 
+/** Drag a whole lane (by its avatar) to another slot. Same ghost + placeholder idea as the cards; the order is committed on drop. */
+function beginLaneDrag(e, id) {
+  if (dragging || e.button > 0) return;
+  const lane = e.currentTarget.closest(".lane");
+  const container = lane.parentElement;
+  const rect = lane.getBoundingClientRect();
+  const head = lane.querySelector(".lane-head").getBoundingClientRect();
+  const offX = e.clientX - head.left;
+  const offY = e.clientY - head.top;
+  const start = { x: e.clientX, y: e.clientY };
+  const pointerId = e.pointerId;
+  e.currentTarget.setPointerCapture?.(pointerId);
+  e.preventDefault();
+
+  let ghost = null;
+  let placeholder = null;
+
+  const place = (x, y) => {
+    const lanes = [...container.querySelectorAll(":scope > .lane")].filter((n) => n !== lane && !n.hidden);
+    const ref = lanes.find((n) => {
+      const r = n.getBoundingClientRect();
+      return y < r.top || (y <= r.bottom && x < r.left + r.width / 2);
+    });
+    if (ref) container.insertBefore(placeholder, ref);
+    else container.append(placeholder);
+  };
+
+  const onMove = (ev) => {
+    if (ev.pointerId !== pointerId) return;
+    if (!ghost) {
+      if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < DRAG_THRESHOLD) return;
+      dragging = true;
+      document.body.classList.add("is-dragging");
+      ghost = h("div", { class: `lane-ghost ${id}`, "aria-hidden": "true" }, lane.querySelector(".lane-head").cloneNode(true));
+      ghost.style.width = `${head.width}px`;
+      document.body.append(ghost);
+      placeholder = h("div", { class: `placeholder lane-ph ${id}`, "aria-hidden": "true" });
+      placeholder.style.height = `${rect.height}px`;
+      lane.hidden = true;
+      container.insertBefore(placeholder, lane);
+    }
+    ghost.style.transform = `translate(${ev.clientX - offX}px, ${ev.clientY - offY}px) scale(1.04)`;
+    place(ev.clientX, ev.clientY);
+  };
+
+  const cleanup = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onCancel);
+    window.removeEventListener("keydown", onKey);
+  };
+
+  const finish = (cancelled) => {
+    cleanup();
+    if (!ghost) return;
+    let index = state.people.findIndex((p) => p.id === id);
+    if (!cancelled) {
+      index = [...container.querySelectorAll(":scope > .lane, :scope > .placeholder")]
+        .filter((n) => n !== lane && !n.hidden).indexOf(placeholder);
+    } else {
+      container.insertBefore(placeholder, lane);
+    }
+    const land = () => {
+      ghost.remove();
+      placeholder.remove();
+      lane.hidden = false;
+      dragging = false;
+      document.body.classList.remove("is-dragging");
+      if (!cancelled && JSON.stringify(movePerson(state, id, index).people) !== JSON.stringify(state.people)) {
+        commit((s) => movePerson(s, id, index)); // saved (and shared) right away
+        navigator.vibrate?.(12);
+        return;
+      }
+      render(); // catch up on changes that arrived during the drag
+    };
+    if (reduced()) { land(); return; }
+    const r = placeholder.getBoundingClientRect();
+    ghost.classList.add("is-snapping");
+    requestAnimationFrame(() => { ghost.style.transform = `translate(${r.left}px, ${r.top}px) scale(1)`; });
+    let landed = false;
+    const once = () => { if (!landed) { landed = true; land(); } };
+    ghost.addEventListener("transitionend", once, { once: true });
+    setTimeout(once, 450);
+  };
+  const onUp = (ev) => { if (ev.pointerId === pointerId) finish(false); };
+  const onCancel = (ev) => { if (ev.pointerId === pointerId) finish(true); };
+  const onKey = (ev) => { if (ev.key === "Escape") finish(true); };
+  window.addEventListener("pointermove", onMove, { passive: false });
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onCancel);
+  window.addEventListener("keydown", onKey);
+}
+
 // ---------------------------------------------------------------- boot
 
 function stamp() {
@@ -1489,6 +1617,18 @@ const onScroll = () => {
 };
 window.addEventListener("scroll", onScroll, { passive: true });
 onScroll();
+
+// A board left open overnight: when the date rolls over, refresh the date line and the 시민박명 times.
+let shownDay = todayIso();
+function rollDay() {
+  const today = todayIso();
+  if (today === shownDay) return;
+  shownDay = today;
+  stamp();
+  if (!busy()) render();
+}
+setInterval(rollDay, 60 * 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) rollDay(); });
 
 stamp();
 render();

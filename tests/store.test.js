@@ -105,3 +105,26 @@ test("정기 업무 assignees: toggle people on and off, kept in people order", 
   assert.deepEqual(parse(JSON.stringify(s)).tasks[0].assignees, ["p3"]);
   assert.deepEqual(parse(JSON.stringify({ ...s, tasks: [{ ...s.tasks[0], assignees: ["p2", "x", "p2"] }] })).tasks[0].assignees, ["p2"]);
 });
+
+test("movePerson reorders lanes without touching tasks; unknown ids are ignored", async () => {
+  const { movePerson } = await import("../js/store.js");
+  const s = board();
+  const m = movePerson(s, "p4", 0);
+  assert.deepEqual(m.people.map((p) => p.id), ["p4", "p1", "p2", "p3"]);
+  assert.equal(m.tasks, s.tasks);
+  assert.deepEqual(movePerson(s, "p1", 9).people.map((p) => p.id), ["p2", "p3", "p4", "p1"]);
+  assert.equal(movePerson(s, "p1", 0), s);
+  assert.equal(movePerson(s, "zz", 1), s);
+});
+
+test("a saved lane order survives parse (ids are not re-assigned by position)", async () => {
+  const { movePerson } = await import("../js/store.js");
+  const s = movePerson(board(), "p3", 0);
+  const back = parse(JSON.stringify(s));
+  assert.deepEqual(back.people.map((p) => p.id), ["p3", "p1", "p2", "p4"]);
+  assert.deepEqual(ids(back, "p1"), ["a", "b", "c"]);
+  // not a permutation of p1..p4 -> falls back to position
+  const bad = JSON.parse(JSON.stringify(s));
+  bad.people[0].id = "p9";
+  assert.deepEqual(parse(JSON.stringify(bad)).people.map((p) => p.id), ["p1", "p2", "p3", "p4"]);
+});

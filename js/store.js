@@ -330,6 +330,17 @@ export function renamePerson(state, id, name) {
   return { ...state, people: state.people.map((p) => (p.id === id ? { ...p, name: clean } : p)) };
 }
 
+/** Drag a person's lane to a new slot (index counts among the other three). Tasks keep their owner id, so nothing else moves. */
+export function movePerson(state, id, index) {
+  const from = state.people.findIndex((p) => p.id === id);
+  if (from < 0 || !Number.isInteger(index)) return state;
+  const rest = state.people.filter((p) => p.id !== id);
+  const to = Math.max(0, Math.min(index, rest.length));
+  if (to === from) return state;
+  rest.splice(to, 0, state.people[from]);
+  return { ...state, people: rest };
+}
+
 export function clearDone(state) {
   return { ...state, tasks: state.tasks.filter((t) => !t.done) };
 }
@@ -399,7 +410,13 @@ export function parse(raw) {
     if (!data || data.version !== 1 || !Array.isArray(data.people) || data.people.length !== 4 || !Array.isArray(data.tasks)) {
       return initialState();
     }
-    const people = data.people.map((p, i) => ({ id: DEFAULT_PEOPLE[i].id, name: cleanText(p.name).slice(0, 20) || DEFAULT_PEOPLE[i].name }));
+    // A saved order (lanes can be dragged) keeps its ids; anything that is not a permutation of p1..p4 falls back to position.
+    const kept = new Set(data.people.map((p) => p?.id));
+    const reordered = DEFAULT_PEOPLE.every((d) => kept.has(d.id));
+    const people = data.people.map((p, i) => {
+      const base = reordered ? DEFAULT_PEOPLE.find((d) => d.id === p.id) : DEFAULT_PEOPLE[i];
+      return { id: base.id, name: cleanText(p?.name).slice(0, 20) || base.name };
+    });
     const valid = new Set([...people.map((p) => p.id), COMMON, REGULAR]);
     const tasks = data.tasks
       .filter((t) => t && typeof t.id === "string" && valid.has(t.owner) && cleanText(t.text))

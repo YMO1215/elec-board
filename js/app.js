@@ -13,7 +13,7 @@ import {
 import { POLL_MS, createSync } from "./sync.js";
 import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
 import { makeZip } from "./zip.js";
-import { SITE, twilightText } from "./twilight.js";
+import { SITE, fetchTwilight, twilightText } from "./twilight.js";
 import { fetchUsage, usageEl } from "./usage.js";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -821,8 +821,30 @@ let firstPaint = true;
 // Computed for today's date on every render, so it changes by itself each day.
 const TWILIGHT_OWNER = "p4";
 
+const TWILIGHT_KEY = "magnet-board:twilight";
+let twilightDay = null; // { day, dawn, dusk } fetched for that day (kept in storage so a reload does not refetch)
+let twilightAsked = "";
+
+function twilightToday() {
+  const day = todayIso();
+  if (twilightDay?.day !== day) {
+    try { const c = JSON.parse(storage.getItem(TWILIGHT_KEY)); if (c?.day === day) twilightDay = c; } catch { /* no cache */ }
+  }
+  if (twilightDay?.day === day) return twilightDay;
+  if (twilightAsked !== day) { // once per day (retried after a failure on the next date roll / reload)
+    twilightAsked = day;
+    fetchTwilight(day).then((t) => {
+      if (!t) { twilightAsked = ""; return; }
+      twilightDay = { day, ...t };
+      try { storage.setItem(TWILIGHT_KEY, JSON.stringify(twilightDay)); } catch { /* private mode */ }
+      if (!busy()) render();
+    });
+  }
+  return null;
+}
+
 function twilightEl() {
-  const t = twilightText(todayIso());
+  const t = twilightToday() ?? twilightText(todayIso()); // computed value shows until (or if never) the fetched one arrives
   return h("div", { class: "twilight", role: "listitem", title: `${SITE.name} 기준 시민박명 (태양 고도 -6°)` },
     h("span", { class: "twilight-label" }, "시민박명"),
     h("span", { class: "twilight-time" }, t ? `${t.dawn} ~ ${t.dusk}` : "—"),

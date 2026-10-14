@@ -26,3 +26,13 @@ test("clock pads and rounds; no twilight at the pole in midsummer", () => {
   assert.equal(clock(371.6), "06:12");
   assert.equal(civilTwilight("2026-06-21", { lat: 89, lon: 0 }), null);
 });
+
+test("fetchTwilight converts the API's UTC times to KST and returns null on failure", async () => {
+  const { fetchTwilight } = await import("../js/twilight.js");
+  const ok = async () => ({ ok: true, json: async () => ({ status: "OK", results: {
+    civil_twilight_begin: "2026-10-13T21:12:30+00:00", civil_twilight_end: "2026-10-14T09:23:10+00:00" } }) });
+  assert.deepEqual(await fetchTwilight("2026-10-14", undefined, ok), { dawn: "06:13", dusk: "18:23" });
+  assert.equal(await fetchTwilight("2026-10-14", undefined, async () => { throw new Error("offline"); }), null);
+  assert.equal(await fetchTwilight("2026-10-14", undefined, async () => ({ ok: false })), null);
+  assert.equal(await fetchTwilight("2026-10-14", undefined, async () => ({ ok: true, json: async () => ({ status: "INVALID_REQUEST" }) })), null);
+});

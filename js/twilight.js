@@ -55,3 +55,29 @@ export function twilightText(iso, site = SITE) {
   const t = civilTwilight(iso, site);
   return t ? { dawn: clock(t.dawn), dusk: clock(t.dusk) } : null;
 }
+
+const API = "https://api.sunrise-sunset.org/json";
+
+/** "2026-10-14T21:12:03+00:00" (UTC) -> minutes after KST midnight on that KST day. */
+function kstMinutes(utcIso) {
+  const d = new Date(utcIso);
+  if (Number.isNaN(d.getTime())) return null;
+  const k = new Date(d.getTime() + KST_HOURS * 3600000);
+  return k.getUTCHours() * 60 + k.getUTCMinutes() + k.getUTCSeconds() / 60;
+}
+
+/** Fetch the day's civil twilight from api.sunrise-sunset.org -> { dawn: "06:12", dusk: "18:23" }, or null on any failure. */
+export async function fetchTwilight(iso, site = SITE, fetchFn = globalThis.fetch) {
+  try {
+    const res = await fetchFn(`${API}?lat=${site.lat}&lng=${site.lon}&date=${iso}&formatted=0`);
+    if (!res.ok) return null;
+    const body = await res.json();
+    const r = body?.results;
+    const dawn = kstMinutes(r?.civil_twilight_begin);
+    const dusk = kstMinutes(r?.civil_twilight_end);
+    if (body?.status !== "OK" || dawn === null || dusk === null) return null;
+    return { dawn: clock(dawn), dusk: clock(dusk) };
+  } catch {
+    return null;
+  }
+}

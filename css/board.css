@@ -587,15 +587,14 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
   flex-wrap: wrap;
   align-items: baseline;
   gap: 2px 8px;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-radius: var(--r-card);
   border: 0.5px dashed var(--separator);
   color: var(--secondary-label);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 15px;
+  line-height: 20px;
 }
-.twilight-time { color: var(--label); font-weight: 600; font-variant-numeric: tabular-nums; }
-.twilight-site { color: var(--tertiary-label); }
+.twilight-time { color: var(--label); font-size: 17px; line-height: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* editor */
 .note.is-editing { background: var(--secondary-background); }

@@ -847,8 +847,7 @@ function twilightEl() {
   const t = twilightToday() ?? twilightText(todayIso()); // computed value shows until (or if never) the fetched one arrives
   return h("div", { class: "twilight", role: "listitem", title: `${SITE.name} 기준 시민박명 (태양 고도 -6°)` },
     h("span", { class: "twilight-label" }, "시민박명"),
-    h("span", { class: "twilight-time" }, t ? `${t.dawn} ~ ${t.dusk}` : "—"),
-    h("span", { class: "twilight-site" }, SITE.name));
+    h("span", { class: "twilight-time" }, t ? `${t.dawn} ~ ${t.dusk}` : "—"));
 }
 
 function dropZone(owner, layout) {

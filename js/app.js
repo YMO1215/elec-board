@@ -12,8 +12,8 @@ import {
   MAX_DOCS, MAX_DOC_FOLDERS, addDoc, addDocFolder, childDocs, moveDocs, removeDocFolder, removeDocs, renameDoc, renameDocFolder, replaceDocFile,
 } from "./store.js";
 import { MAX_DOC_BYTES, deleteDocFiles, docProblem, docSrc, fetchDoc, uploadDoc } from "./doc.js";
-import { editPdf, markReceipt, mergePdfs, normAngle, planChanged } from "./pdfops.js";
-import { loadPdfLib, pageTexts, textMeasurer, textPicture, thumbnails } from "./pdfkit.js";
+import { editPdf, markReceipt, mergePdfs, normAngle, planChanged, splitBuyerStamp } from "./pdfops.js";
+import { drawStampPreview, loadPdfLib, pageTexts, pdfViewer, textMeasurer, textPicture } from "./pdfkit.js";
 import { BUYER, buyerSpot, buyerText, highlightBox, receiptFields, receiptMarks } from "./receipt.js";
 import { csvName, receiptCsv } from "./receiptcsv.js";
 import { POLL_MS, createSync } from "./sync.js";
@@ -888,7 +888,7 @@ async function makeBuyerCopy(doc, name) {
   const first = pages[0];
   const spot = buyerSpot(first.width, first.height);
   const pic = await textPicture(buyerText(name), { size: spot.size, color: `rgb(${BUYER.color.map((c) => c * 255).join(",")})` });
-  const buyer = { png: pic.png, x: spot.x - pic.left, y: spot.baseline - pic.descent, width: pic.width, height: pic.height };
+  const buyer = { png: pic.png, x: spot.x - pic.left, y: spot.baseline - pic.descent, width: pic.width, height: pic.height, text: buyerText(name) };
   const out = new Blob([await markReceipt(lib, bytes, marks.map((m) => m.quads.map(highlightBox)), buyer)], { type: "application/pdf" });
   const fileName = `${doc.name} - 구매자 ${name}`.slice(0, 80);
   const url = await uploadDocBlob(out, fileName);
@@ -980,60 +980,213 @@ async function exportReceiptCsv(ids) {
 }
 
 // ---------------------------------------------------------------- PDF page editor
-// Reorder, rotate and delete pages, rename. Saving uploads a new file, points the record at it, then deletes the old file.
+// Page list on the left (drag to reorder), the chosen page big on the right (zoom in / out / fit).
+// Rotate and delete act on the chosen page. Saving uploads a new file, points the record at it, then deletes the old file.
+// A 구매자 stamp (made by the receipt button) always ends up on the first page: the preview draws it there live,
+// and pdfops.editPdf moves the real stamp when saving.
+
+const ZOOMS = [0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4]; // 1 = page fits the viewer's width
+const DRAG_HOLD_MS = 320; // touch: press this long on a page in the list to pick it up (a quick swipe still scrolls)
 
 function openDocEditor(id) {
   const doc = docOf(id);
   if (!doc) return;
   let plan = []; // [{ index, rotate }] in the new order
   let count = 0;
+  let sel = 0; // position in plan of the page shown big
+  let zoom = 1;
   const thumbs = [];
-  let cancelThumbs = () => {};
+  let viewer = null;
+  let stamp = null; // { text, rect } when this PDF carries a 구매자 stamp
   let bytes = null;
   let saving = false;
 
-  const dialog = h("dialog", { class: "cal album doc-editor", "aria-label": `“${doc.name}” 편집` });
+  const dialog = h("dialog", { class: "cal doc-editor", "aria-label": `“${doc.name}” 편집` });
   const close = () => animateClose(dialog);
-  const nameInput = h("input", { class: "contact-input doc-name-input", type: "text", value: doc.name, maxlength: 80, "aria-label": "PDF 이름" });
-  const grid = h("ol", { class: "page-grid", role: "list" });
-  const info = h("p", { class: "album-note" }, "불러오는 중…");
+  const nameInput = h("input", { class: "contact-input pe-name", type: "text", value: doc.name, maxlength: 80, "aria-label": "PDF 이름" });
+  const list = h("ol", { class: "pe-list", role: "listbox", "aria-label": "페이지 — 끌어서 순서 바꾸기" });
+  const canvas = h("canvas", { class: "pe-canvas", "aria-label": "선택한 페이지" });
+  const view = h("div", { class: "pe-view", tabindex: "0" }, h("div", { class: "pe-sheet" }, canvas));
+  const info = h("span", { class: "pe-info" }, "불러오는 중…");
+  const zoomLabel = h("span", { class: "pe-zoom" }, "100%");
   const saveBtn = h("button", { class: "text-btn doc-save", type: "button", disabled: true }, "저장");
+  const toolBtn = (iconName, label, run) => h("button", { class: "icon-btn", type: "button", "aria-label": label, title: label, onClick: run }, icon(iconName));
+  const prevBtn = toolBtn("chevron-left", "선택한 페이지를 앞으로", () => move(sel, sel - 1));
+  const nextBtn = toolBtn("chevron-right", "선택한 페이지를 뒤로", () => move(sel, sel + 1));
+  const rotBtn = toolBtn("rotate", "선택한 페이지 오른쪽으로 돌리기", () => rotate());
+  const delBtn = h("button", { class: "icon-btn is-delete", type: "button", "aria-label": "선택한 페이지 삭제", title: "선택한 페이지 삭제", onClick: () => remove() }, icon("trash"));
+  const resetBtn = h("button", { class: "text-btn quiet", type: "button", onClick: () => { plan = Array.from({ length: count }, (_, i) => ({ index: i, rotate: 0 })); sel = 0; refresh(); } }, icon("restore", 16), "원래대로");
+  const stampNote = h("p", { class: "album-note pe-note", hidden: true }, "구매자 표시는 순서를 바꿔도 항상 1쪽에 표시되고, 저장할 때 1쪽으로 옮겨져요.");
 
-  const move = (i, by) => {
-    const j = i + by;
-    if (j < 0 || j >= plan.length) return;
-    [plan[i], plan[j]] = [plan[j], plan[i]];
-    drawGrid(j, by < 0 ? "left" : "right");
-  };
-  const rotate = (i) => { plan[i] = { ...plan[i], rotate: normAngle(plan[i].rotate + 90) }; drawGrid(i, "rotate"); };
-  const remove = (i) => {
+  // ---- page operations
+  function move(from, to) {
+    if (to < 0 || to >= plan.length || from === to) return;
+    const [p] = plan.splice(from, 1);
+    plan.splice(to, 0, p);
+    sel = to;
+    refresh();
+  }
+  function rotate() {
+    plan[sel] = { ...plan[sel], rotate: normAngle(plan[sel].rotate + 90) };
+    refresh();
+  }
+  function remove() {
     if (plan.length === 1) { toast("페이지가 하나는 남아 있어야 해요"); return; }
-    plan.splice(i, 1);
-    drawGrid(Math.min(i, plan.length - 1), "delete");
-  };
-
-  function drawGrid(focusAt = null, focusWhat = null) {
-    grid.replaceChildren(...plan.map((p, i) => h("li", { class: "page-card" },
-      h("div", { class: "page-thumb" },
-        thumbs[p.index]
-          ? h("img", { src: thumbs[p.index], alt: "", style: `transform: rotate(${p.rotate}deg)` })
-          : h("span", { class: "page-wait" }, `${p.index + 1}`)),
-      h("p", { class: "page-label" }, `${i + 1}쪽`, p.index !== i ? h("span", {}, ` (원래 ${p.index + 1})`) : null),
-      h("div", { class: "page-tools" },
-        h("button", { class: "icon-btn", type: "button", dataset: { act: "left" }, disabled: i === 0 ? true : null, "aria-label": `${i + 1}쪽 앞으로`, onClick: () => move(i, -1) }, icon("chevron-left")),
-        h("button", { class: "icon-btn", type: "button", dataset: { act: "rotate" }, "aria-label": `${i + 1}쪽 오른쪽으로 돌리기`, onClick: () => rotate(i) }, icon("rotate")),
-        h("button", { class: "icon-btn is-delete", type: "button", dataset: { act: "delete" }, "aria-label": `${i + 1}쪽 삭제`, onClick: () => remove(i) }, icon("x")),
-        h("button", { class: "icon-btn", type: "button", dataset: { act: "right" }, disabled: i === plan.length - 1 ? true : null, "aria-label": `${i + 1}쪽 뒤로`, onClick: () => move(i, 1) }, icon("chevron-right"))))));
-    const changed = count && planChanged(plan, count);
-    info.textContent = count ? `${plan.length}쪽${changed ? ` · 원래 ${count}쪽에서 바뀜` : ""}` : info.textContent;
-    if (focusAt !== null) {
-      const card = grid.children[focusAt];
-      (card?.querySelector(`[data-act="${focusWhat}"]:not([disabled])`) ?? card?.querySelector("button:not([disabled])"))?.focus();
-    }
+    plan.splice(sel, 1);
+    sel = Math.min(sel, plan.length - 1);
+    refresh();
+  }
+  function select(pos, focus = false) {
+    sel = Math.max(0, Math.min(plan.length - 1, pos));
+    drawList();
+    drawView();
+    if (focus) list.children[sel]?.focus();
   }
 
-  const reset = h("button", { class: "text-btn quiet", type: "button", onClick: () => { plan = Array.from({ length: count }, (_, i) => ({ index: i, rotate: 0 })); drawGrid(); } }, icon("restore", 16), "원래대로");
+  // ---- list (left)
+  function itemEl(p, pos) {
+    const thumb = thumbs[p.index]
+      ? h("img", { src: thumbs[p.index], alt: "", draggable: "false", style: `transform: rotate(${p.rotate}deg)` })
+      : h("span", { class: "page-wait" }, String(p.index + 1));
+    const li = h("li", {
+      class: `pe-item${pos === sel ? " is-sel" : ""}`, role: "option", tabindex: pos === sel ? "0" : "-1",
+      "aria-selected": pos === sel ? "true" : "false", "aria-label": `${pos + 1}쪽${p.index !== pos ? ` (원래 ${p.index + 1}쪽)` : ""}`,
+      dataset: { pos: String(pos) },
+    },
+      h("div", { class: "pe-thumb" }, thumb, stamp && pos === 0 ? h("span", { class: "pe-buyer", "aria-hidden": "true" }, stamp.text) : null),
+      h("span", { class: "pe-num" }, String(pos + 1), p.index !== pos ? h("small", {}, ` 원래 ${p.index + 1}`) : null));
+    li.addEventListener("click", () => { if (!dragged) select(pos); });
+    li.addEventListener("keydown", (e) => {
+      const step = e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : 0;
+      if (step) { e.preventDefault(); if (e.altKey) { move(sel, sel + step); list.children[sel]?.focus(); } else select(sel + step, true); }
+      if (e.key === "Delete") { e.preventDefault(); remove(); list.children[sel]?.focus(); }
+    });
+    return li;
+  }
+  function drawList() {
+    list.replaceChildren(...plan.map(itemEl));
+    list.children[sel]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
 
+  // ---- drag to reorder (mouse: as soon as it moves; touch: after a short hold, so the list still scrolls)
+  let drag = null; // { li, from, pointerId, startX, startY, active, timer }
+  let dragged = false; // swallow the click that ends a drag
+  const vertical = () => getComputedStyle(list).flexDirection.startsWith("column");
+  function startDrag() {
+    drag.active = true;
+    drag.li.classList.add("is-dragging");
+    list.classList.add("is-sorting");
+    navigator.vibrate?.(10);
+  }
+  list.addEventListener("pointerdown", (e) => {
+    const li = e.target.closest(".pe-item");
+    if (!li || e.button !== 0 || plan.length < 2) return;
+    drag = { li, from: Number(li.dataset.pos), pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, active: false, timer: null };
+    if (e.pointerType !== "mouse") drag.timer = setTimeout(() => { if (drag) { startDrag(); li.setPointerCapture(e.pointerId); } }, DRAG_HOLD_MS);
+  });
+  list.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const moved = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
+    if (!drag.active) {
+      if (e.pointerType === "mouse" && moved > 4) { startDrag(); drag.li.setPointerCapture(e.pointerId); }
+      else if (e.pointerType !== "mouse" && moved > 8) { clearTimeout(drag.timer); drag = null; } // a scroll, not a hold
+      return;
+    }
+    e.preventDefault();
+    // move the lifted item in the DOM next to the item under the pointer
+    const v = vertical();
+    const others = [...list.children].filter((el) => el !== drag.li);
+    const before = others.find((el) => {
+      const r = el.getBoundingClientRect();
+      return v ? e.clientY < r.top + r.height / 2 : e.clientX < r.left + r.width / 2;
+    });
+    if (before) { if (drag.li.nextElementSibling !== before) list.insertBefore(drag.li, before); }
+    else if (list.lastElementChild !== drag.li) list.append(drag.li);
+    // keep scrolling while dragging near the edge
+    const r = list.getBoundingClientRect();
+    const edge = 36;
+    if (v) list.scrollTop += e.clientY < r.top + edge ? -12 : e.clientY > r.bottom - edge ? 12 : 0;
+    else list.scrollLeft += e.clientX < r.left + edge ? -12 : e.clientX > r.right - edge ? 12 : 0;
+  });
+  // touch: once a page is picked up the list must not scroll under the finger
+  list.addEventListener("touchmove", (e) => { if (drag?.active) e.preventDefault(); }, { passive: false });
+  const endDrag = (e) => {
+    if (!drag || (e && e.pointerId !== drag.pointerId)) return;
+    clearTimeout(drag.timer);
+    const was = drag;
+    drag = null;
+    if (!was.active) return;
+    list.classList.remove("is-sorting");
+    const to = [...list.children].indexOf(was.li);
+    dragged = true;
+    setTimeout(() => { dragged = false; }, 0);
+    if (to >= 0 && to !== was.from) move(was.from, to);
+    else drawList();
+  };
+  list.addEventListener("pointerup", endDrag);
+  list.addEventListener("pointercancel", endDrag);
+  list.addEventListener("contextmenu", (e) => { if (drag) e.preventDefault(); }); // long-press menu on phones
+
+  // ---- big view (right)
+  function fitScale() {
+    const p = plan[sel];
+    const s = viewer.size(p.index);
+    const sideways = p.rotate % 180 !== 0;
+    const w = sideways ? s.height : s.width;
+    return Math.max(0.1, (view.clientWidth - 32) / w);
+  }
+  function drawView() {
+    if (!viewer || !plan.length) return;
+    zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+    const p = plan[sel];
+    const overlay = stamp && sel === 0 ? (ctx, vp) => drawStampPreview(ctx, vp, stamp) : null;
+    viewer.render(canvas, p.index, { scale: fitScale() * zoom, rotate: p.rotate, overlay }).catch(() => {});
+  }
+  function setZoom(next, anchor = null) {
+    const z = Math.max(ZOOMS[0], Math.min(ZOOMS[ZOOMS.length - 1], next));
+    if (z === zoom) return;
+    // keep the point under the pointer (or the centre) in place
+    const ax = anchor ? anchor.x : view.clientWidth / 2;
+    const ay = anchor ? anchor.y : view.clientHeight / 2;
+    const fx = (view.scrollLeft + ax) / Math.max(1, view.scrollWidth);
+    const fy = (view.scrollTop + ay) / Math.max(1, view.scrollHeight);
+    zoom = z;
+    drawView();
+    requestAnimationFrame(() => {
+      view.scrollLeft = fx * view.scrollWidth - ax;
+      view.scrollTop = fy * view.scrollHeight - ay;
+    });
+  }
+  const zoomStep = (dir) => {
+    const i = ZOOMS.findIndex((z) => z >= zoom - 1e-6);
+    setZoom(ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, (i < 0 ? ZOOMS.length - 1 : i) + dir))]);
+  };
+  view.addEventListener("wheel", (e) => {
+    if (!e.ctrlKey && !e.metaKey) return; // plain wheel scrolls the page
+    e.preventDefault();
+    const r = view.getBoundingClientRect();
+    setZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), { x: e.clientX - r.left, y: e.clientY - r.top });
+  }, { passive: false });
+  view.addEventListener("keydown", (e) => {
+    if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomStep(1); }
+    if (e.key === "-") { e.preventDefault(); zoomStep(-1); }
+    if (e.key === "0") { e.preventDefault(); setZoom(1); }
+    if (e.key === "PageDown") { e.preventDefault(); select(sel + 1); }
+    if (e.key === "PageUp") { e.preventDefault(); select(sel - 1); }
+  });
+  const resize = new ResizeObserver(() => drawView());
+
+  function refresh() {
+    drawList();
+    drawView();
+    const changed = count && planChanged(plan, count);
+    info.textContent = count ? `${sel + 1} / ${plan.length}쪽${changed ? ` · 원래 ${count}쪽에서 바뀜` : ""}` : info.textContent;
+    prevBtn.disabled = sel === 0;
+    nextBtn.disabled = sel === plan.length - 1;
+    delBtn.disabled = plan.length === 1;
+  }
+
+  // ---- save
   saveBtn.addEventListener("click", async () => {
     if (saving) return;
     const name = nameInput.value.trim() || doc.name;
@@ -1045,7 +1198,7 @@ function openDocEditor(id) {
       if (pagesChanged) {
         toast("PDF 저장하는 중…");
         const lib = await loadPdfLib();
-        const out = new Blob([await editPdf(lib, bytes, plan)], { type: "application/pdf" });
+        const out = new Blob([await editPdf(lib, bytes, plan)], { type: "application/pdf" }); // moves a 구매자 stamp to the new page 1
         const url = await uploadDocBlob(out, name);
         const oldUrl = docOf(id)?.url;
         commit((s) => replaceDocFile(renameDoc(s, id, name), id, { url, size: out.size }));
@@ -1066,35 +1219,45 @@ function openDocEditor(id) {
   nameInput.addEventListener("input", () => { if (bytes) saveBtn.disabled = false; });
   nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameInput.blur(); } });
 
-  dialog.append(h("div", { class: "album-inner" },
-    h("header", { class: "album-head" },
+  dialog.append(h("div", { class: "pe" },
+    h("header", { class: "pe-bar" },
       h("h2", { class: "cal-title" }, "PDF 편집"),
+      nameInput,
+      saveBtn,
       h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: close }, icon("x"))),
-    nameInput,
-    h("div", { class: "folder-actions" }, info, h("span", { class: "spacer" }), reset, saveBtn),
-    h("p", { class: "album-note" }, "화살표로 순서를 바꾸고, 돌리기·삭제 후 저장하세요. 저장하면 원본 파일이 바뀐 파일로 교체돼요."),
-    grid));
+    h("div", { class: "pe-tools" },
+      info, prevBtn, nextBtn, rotBtn, delBtn, resetBtn,
+      h("span", { class: "spacer" }),
+      toolBtn("zoom-out", "축소", () => zoomStep(-1)), zoomLabel, toolBtn("zoom-in", "확대", () => zoomStep(1)),
+      h("button", { class: "text-btn quiet", type: "button", title: "폭 맞춤", onClick: () => setZoom(1) }, "맞춤")),
+    stampNote,
+    h("div", { class: "pe-body" }, list, view)));
   wireDialog(dialog);
-  dialog.addEventListener("close", () => { cancelThumbs(); dialog.remove(); });
+  dialog.addEventListener("close", () => { resize.disconnect(); viewer?.destroy(); dialog.remove(); });
   document.body.append(dialog);
   dialog.showModal();
 
   (async () => {
     try {
-      bytes = await docBytes(doc);
-      loadPdfLib().catch(() => {}); // warm up for the save
-      const shot = await thumbnails(bytes, {
-        onPage: (i, url) => {
-          thumbs[i] = url;
-          const img = [...grid.children].map((li, at) => ({ li, p: plan[at] })).find(({ p }) => p?.index === i);
-          if (img) { const box = img.li.querySelector(".page-thumb"); box.replaceChildren(h("img", { src: url, alt: "", style: `transform: rotate(${img.p.rotate}deg)` })); }
-        },
-      });
-      cancelThumbs = shot.cancel;
-      count = shot.count;
+      const [raw, lib] = await Promise.all([docBytes(doc), loadPdfLib()]);
+      bytes = raw;
+      const split = await splitBuyerStamp(lib, bytes); // preview without the stamp; the editor draws it on page 1
+      stamp = split.stamp;
+      stampNote.hidden = !stamp;
+      viewer = await pdfViewer(split.bytes);
+      count = viewer.count;
       plan = Array.from({ length: count }, (_, i) => ({ index: i, rotate: 0 }));
       saveBtn.disabled = false;
-      drawGrid();
+      refresh();
+      resize.observe(view);
+      view.focus({ preventScroll: true });
+      viewer.thumbs(132, (i, url) => {
+        thumbs[i] = url;
+        const pos = plan.findIndex((p) => p.index === i);
+        const box = list.children[pos]?.querySelector(".pe-thumb");
+        if (box) box.replaceChildren(h("img", { src: url, alt: "", draggable: "false", style: `transform: rotate(${plan[pos].rotate}deg)` }),
+          stamp && pos === 0 ? h("span", { class: "pe-buyer", "aria-hidden": "true" }, stamp.text) : null);
+      });
     } catch (err) {
       info.textContent = `열지 못했어요 — ${err.message}`;
     }

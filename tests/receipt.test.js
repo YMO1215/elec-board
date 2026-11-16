@@ -5,7 +5,7 @@ import zlib from "node:zlib";
 import * as lib from "pdf-lib";
 import { amountOf, buyerSpot, buyerText, charsOf, highlightBox, receiptFields, receiptMarks, rowsOf, splitRow } from "../js/receipt.js";
 import { DETAIL_HEADERS, cell, csvName, receiptCsv } from "../js/receiptcsv.js";
-import { markReceipt } from "../js/pdfops.js";
+import { BUYER_STAMP, editPdf, markReceipt, splitBuyerStamp } from "../js/pdfops.js";
 import { addDoc, childDocs, initialState, moveDocs, addDocFolder, parse, removeDocs } from "../js/store.js";
 
 // every glyph 0.5em wide: easy arithmetic for partial marks
@@ -134,10 +134,47 @@ test("markReceipt writes Highlight annotations with an appearance, replaces old 
     assert.deepEqual(a.get(lib.PDFName.of("QuadPoints")).asArray().map((n) => n.asNumber()), box.quad);
     assert.ok(a.lookup(lib.PDFName.of("AP")).lookup(lib.PDFName.of("N")), "has a normal appearance stream");
   }
-  const stamped = await lib.PDFDocument.load(once);
-  const xo = stamped.getPages()[0].node.Resources().lookup(lib.PDFName.of("XObject"));
-  assert.ok(xo && xo.keys().length === 1, "page 1 carries the buyer picture");
-  assert.equal(stamped.getPages()[1].node.Resources().lookup(lib.PDFName.of("XObject")), undefined);
+  assert.deepEqual(await stampPages(once), [0], "page 1 carries the buyer stamp");
+  assert.deepEqual(await stampPages(twice), [0], "marking without a buyer keeps the stamp");
+});
+
+/** Page numbers (0-based) that carry the 구매자 stamp. */
+async function stampPages(bytes) {
+  const doc = await lib.PDFDocument.load(bytes);
+  const out = [];
+  doc.getPages().forEach((p, i) => {
+    const arr = p.node.lookup(lib.PDFName.of("Annots"));
+    for (const r of arr ? arr.asArray() : []) {
+      const nm = doc.context.lookup(r).lookup(lib.PDFName.of("NM"));
+      if (nm && nm.decodeText() === BUYER_STAMP) out.push(i);
+    }
+  });
+  return out;
+}
+
+test("the 구매자 stamp follows page 1: reorder, delete page 1, re-mark replaces the name", async () => {
+  const src = await lib.PDFDocument.create();
+  for (const w of [100, 200, 300]) src.addPage([w, 842]);
+  const png = tinyPng();
+  const marked = await markReceipt(lib, await src.save(), [[], [], []], { png, x: 40, y: 774, width: 140, height: 26, text: "구매자 : 박영모" });
+  // page order 3,1,2 -> the stamp is on the new first page (width 300)
+  const moved = await editPdf(lib, marked, [{ index: 2, rotate: 0 }, { index: 0, rotate: 0 }, { index: 1, rotate: 0 }]);
+  assert.deepEqual(await stampPages(moved), [0]);
+  assert.equal((await lib.PDFDocument.load(moved)).getPages()[0].getWidth(), 300);
+  // page 1 deleted -> the stamp is not lost, it moves to the new page 1
+  const dropped = await editPdf(lib, marked, [{ index: 1, rotate: 0 }, { index: 2, rotate: 0 }]);
+  assert.deepEqual(await stampPages(dropped), [0]);
+  // a second name replaces the first instead of printing over it
+  const again = await markReceipt(lib, moved, [[], [], []], { png, x: 40, y: 774, width: 140, height: 26, text: "구매자 : 홍길동" });
+  assert.deepEqual(await stampPages(again), [0]);
+  // the editor preview gets the text + box and a copy without the stamp
+  const split = await splitBuyerStamp(lib, again);
+  assert.equal(split.stamp.text, "구매자 : 홍길동");
+  assert.deepEqual(split.stamp.rect, [40, 774, 180, 800]);
+  assert.deepEqual(await stampPages(split.bytes), []);
+  assert.equal((await splitBuyerStamp(lib, await src.save())).stamp, null);
+  // a PDF without a stamp is rebuilt as before
+  assert.deepEqual(await stampPages(await editPdf(lib, await src.save(), [{ index: 1, rotate: 0 }])), []);
 });
 
 const URL1 = "https://abc123.public.blob.vercel-storage.com/docs/a-xyz.pdf";

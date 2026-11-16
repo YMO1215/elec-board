@@ -91,28 +91,81 @@ export async function textPicture(text, { size, color = "#ff0000" }) {
 }
 
 /**
- * Draw every page as a small image, one after another, calling `onPage(index, dataUrl)` as each is ready.
- * Returns the page count right away (before the drawing finishes) and a `cancel` for when the editor closes.
+ * Draw "구매자 : 이름" the way the stamp prints, in PDF coordinates of the page (any rotation):
+ * `stamp` = { text, rect: [x0, y0, x1, y1] } from pdfops.splitBuyerStamp.
  */
-export async function thumbnails(bytes, { width = 160, onPage }) {
+export function drawStampPreview(ctx, viewport, stamp) {
+  const [x0, y0, , y1] = stamp.rect;
+  const h = y1 - y0;
+  const size = h / 1.2; // the picture is the text's ascent + descent + a little padding
+  ctx.save();
+  ctx.transform(...viewport.transform); // PDF space (y up) -> canvas
+  ctx.translate(x0 + h * 0.04, y0 + h * 0.2);
+  ctx.scale(1, -1); // text must not come out mirrored
+  ctx.font = `${size}px "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif`;
+  ctx.fillStyle = "#ff0000";
+  ctx.fillText(stamp.text, 0, 0);
+  ctx.restore();
+}
+
+/**
+ * One open PDF for the page editor: small thumbnails for the list, a big render for the viewer.
+ *   count                         number of pages
+ *   size(i)                       { width, height } of page i at scale 1 (its own rotation applied), in CSS px
+ *   thumbs(width, onPage)         draws every page one after another, onPage(i, dataUrl)
+ *   render(canvas, i, { scale, rotate })  draws page i (extra rotation in degrees); a newer call cancels the older one
+ *   destroy()
+ */
+export async function pdfViewer(bytes) {
   const lib = await loadPdfjs();
   const doc = await lib.getDocument({ data: bytes.slice() }).promise; // pdf.js takes ownership of the buffer
+  const pages = [];
+  for (let i = 1; i <= doc.numPages; i += 1) pages.push(await doc.getPage(i));
   let stopped = false;
-  (async () => {
-    for (let i = 1; i <= doc.numPages && !stopped; i += 1) {
+  let task = null;
+  const dpr = () => window.devicePixelRatio || 1;
+  return {
+    count: pages.length,
+    size(i) {
+      const v = pages[i].getViewport({ scale: 1 });
+      return { width: v.width, height: v.height };
+    },
+    async thumbs(width, onPage) {
+      for (let i = 0; i < pages.length && !stopped; i += 1) {
+        try {
+          const page = pages[i];
+          const viewport = page.getViewport({ scale: (width * dpr()) / page.getViewport({ scale: 1 }).width });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+          if (!stopped) onPage(i, canvas.toDataURL("image/jpeg", 0.75));
+        } catch { /* a page that will not draw keeps its placeholder */ }
+      }
+    },
+    /** `overlay(ctx, viewport)` draws on top after the page (e.g. the 구매자 line), in canvas pixels. */
+    async render(canvas, i, { scale, rotate = 0, overlay = null }) {
+      task?.cancel();
+      const page = pages[i];
+      const viewport = page.getViewport({ scale: scale * dpr(), rotation: (page.rotate + rotate) % 360 });
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      canvas.style.width = `${Math.ceil(viewport.width / dpr())}px`;
+      canvas.style.height = `${Math.ceil(viewport.height / dpr())}px`;
+      task = page.render({ canvasContext: canvas.getContext("2d"), viewport });
+      const mine = task;
       try {
-        const page = await doc.getPage(i);
-        const base = page.getViewport({ scale: 1 });
-        const viewport = page.getViewport({ scale: (width * (window.devicePixelRatio || 1)) / base.width });
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height);
-        await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-        if (!stopped) onPage(i - 1, canvas.toDataURL("image/jpeg", 0.7));
-        page.cleanup();
-      } catch { /* a page that will not draw keeps its placeholder */ }
-    }
-    if (stopped) doc.destroy();
-  })();
-  return { count: doc.numPages, cancel: () => { stopped = true; doc.destroy(); } };
+        await mine.promise;
+      } catch (err) {
+        if (err?.name === "RenderingCancelledException") return;
+        throw err;
+      }
+      if (overlay && task === mine) overlay(canvas.getContext("2d"), viewport);
+    },
+    destroy() {
+      stopped = true;
+      task?.cancel();
+      doc.destroy();
+    },
+  };
 }

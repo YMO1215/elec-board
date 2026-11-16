@@ -35,6 +35,7 @@ export async function editPdf(lib, bytes, plan) {
   const src = await open(lib, bytes);
   const count = src.getPageCount();
   if (plan.some((p) => !Number.isInteger(p.index) || p.index < 0 || p.index >= count)) throw new Error("페이지 번호가 올바르지 않아요");
+  moveBuyerStamp(lib, src, plan[0].index); // "구매자 : 이름" always rides on whatever page ends up first
   const out = await lib.PDFDocument.create();
   const pages = await out.copyPages(src, plan.map((p) => p.index));
   pages.forEach((page, i) => {
@@ -55,6 +56,7 @@ export async function markReceipt(lib, bytes, pages, buyer) {
   const { PDFName, PDFArray, PDFDict } = lib;
   const ctx = doc.context;
   const docPages = doc.getPages();
+  if (buyer) removeBuyerStamps(lib, doc); // a new name replaces the old one instead of printing over it
   docPages.forEach((page, i) => {
     const old = page.node.lookup(PDFName.of("Annots"));
     const keep = [];
@@ -83,13 +85,83 @@ export async function markReceipt(lib, bytes, pages, buyer) {
     if (keep.length || old) page.node.set(PDFName.of("Annots"), ctx.obj(keep));
   });
   if (buyer && docPages[0]) {
+    // a Stamp annotation (not page content), named BUYER_STAMP: the page editor can find it and move it to the new page 1
     const img = await doc.embedPng(buyer.png);
-    docPages[0].drawImage(img, { x: buyer.x, y: buyer.y, width: buyer.width, height: buyer.height });
+    const { width: w, height: h } = buyer;
+    const ap = ctx.stream(`q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q`, {
+      Type: "XObject", Subtype: "Form", BBox: [0, 0, w, h], Matrix: [1, 0, 0, 1, 0, 0], Resources: { XObject: { Im0: img.ref } },
+    });
+    const stamp = ctx.obj({
+      Type: "Annot", Subtype: "Stamp", Rect: [buyer.x, buyer.y, buyer.x + w, buyer.y + h], F: 4 + 128, // print + locked
+      NM: lib.PDFString.of(BUYER_STAMP), Contents: lib.PDFHexString.fromText(buyer.text ?? ""), P: docPages[0].ref, AP: { N: ctx.register(ap) },
+    });
+    docPages[0].node.addAnnot(ctx.register(stamp));
   }
   return doc.save();
 }
 const HL_COLOR = [1, 1, 0];
 const HL_RGB = HL_COLOR.join(" ");
+export const BUYER_STAMP = "elec-board-buyer";
+
+/** [{ page, ref }] of every 구매자 stamp in the document. */
+function buyerStamps(lib, doc) {
+  const { PDFName, PDFArray, PDFDict } = lib;
+  const out = [];
+  doc.getPages().forEach((page, i) => {
+    const annots = page.node.lookup(PDFName.of("Annots"));
+    if (!(annots instanceof PDFArray)) return;
+    for (const ref of annots.asArray()) {
+      const a = doc.context.lookup(ref);
+      const nm = a instanceof PDFDict ? a.lookup(PDFName.of("NM")) : null;
+      if (nm && typeof nm.decodeText === "function" && nm.decodeText() === BUYER_STAMP) out.push({ page: i, ref });
+    }
+  });
+  return out;
+}
+
+function dropAnnot(lib, page, ref) {
+  const { PDFName, PDFArray } = lib;
+  const annots = page.node.lookup(PDFName.of("Annots"));
+  if (annots instanceof PDFArray) page.node.set(PDFName.of("Annots"), page.doc.context.obj(annots.asArray().filter((r) => r !== ref)));
+}
+
+function removeBuyerStamps(lib, doc) {
+  const pages = doc.getPages();
+  for (const { page, ref } of buyerStamps(lib, doc)) dropAnnot(lib, pages[page], ref);
+}
+
+/** Put the (first) 구매자 stamp on page `to`; extra copies are dropped. Returns whether there was one. */
+export function moveBuyerStamp(lib, doc, to) {
+  const found = buyerStamps(lib, doc);
+  if (!found.length) return false;
+  const pages = doc.getPages();
+  for (const { page, ref } of found) dropAnnot(lib, pages[page], ref);
+  const { ref } = found[0];
+  doc.context.lookup(ref).set(lib.PDFName.of("P"), pages[to].ref);
+  pages[to].node.addAnnot(ref);
+  return true;
+}
+
+/**
+ * For the editor preview: the 구매자 stamp's text and box, and the same PDF without it
+ * (the editor draws the line itself on whichever page is first right now).
+ */
+export async function splitBuyerStamp(lib, bytes) {
+  const doc = await open(lib, bytes);
+  const found = buyerStamps(lib, doc);
+  if (!found.length) return { stamp: null, bytes };
+  const a = doc.context.lookup(found[0].ref);
+  const rect = a.lookup(lib.PDFName.of("Rect")).asArray().map((n) => n.asNumber());
+  const contents = a.lookup(lib.PDFName.of("Contents"));
+  const text = typeof contents?.decodeText === "function" ? contents.decodeText() : "";
+  removeBuyerStamps(lib, doc);
+  return { stamp: { text, rect }, bytes: await doc.save() };
+}
+
+/** Does this PDF carry a 구매자 stamp (made by this board)? */
+export async function hasBuyerStamp(lib, bytes) {
+  return buyerStamps(lib, await open(lib, bytes)).length > 0;
+}
 
 /** Did the plan change anything compared to the original page list? */
 export function planChanged(plan, pageCount) {

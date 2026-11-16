@@ -762,6 +762,18 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .doc-sub { font-size: 12px; line-height: 16px; color: var(--tertiary-label); font-variant-numeric: tabular-nums; }
 .doc-row .icon-btn.is-armed { width: auto; padding: 0 10px 0 8px; gap: 4px; display: inline-flex; }
 .doc-row .icon-btn.is-delete:hover { color: var(--destructive); }
+/* a PDF dragged over the 문서함: tint ring around the sheet + a hint pinned to its top */
+.docs.is-dropping { box-shadow: inset 0 0 0 3px var(--tint); }
+.docs.is-dropping .album-inner { position: relative; }
+.docs.is-dropping .album-inner > * { opacity: 0.35; pointer-events: none; }
+.docs.is-dropping .album-inner::before {
+  content: "여기에 놓으면 업로드돼요";
+  position: sticky; top: 8px; z-index: 1;
+  justify-self: center;
+  padding: 8px 16px; border-radius: 14px;
+  background: var(--tint); color: #fff;
+  font-size: 15px; line-height: 20px; font-weight: 600;
+}
 .doc-row button.doc-open { padding: 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
 .doc-row.is-picked { box-shadow: inset 0 0 0 2px var(--tint); }
 .doc-check { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--separator); font-size: 13px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
@@ -1209,6 +1221,8 @@ dialog.sheet { width: min(420px, calc(100vw - 20px)); max-height: calc(100dvh - 
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), var(--shadow-float);
 }
 .toast:empty { display: none; }
+/* as a popover (top layer, above open dialogs): undo the UA popover box, keep the bottom-centre spot */
+.toast[popover] { inset: auto auto calc(24px + env(safe-area-inset-bottom)) 50%; margin: 0; border: 0; overflow: visible; }
 .toast span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toast button {
   flex: none;

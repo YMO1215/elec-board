@@ -155,8 +155,26 @@ function toast(message, action) {
   if (action) {
     box.append(h("button", { type: "button", onClick: () => { action.run(); box.replaceChildren(); } }, action.label));
   }
+  raiseToast(box);
   replay(box, "is-in"); // springs up from the bottom each time
-  toastTimer = setTimeout(() => box.replaceChildren(), TOAST_MS);
+  toastTimer = setTimeout(() => { box.replaceChildren(); lowerToast(box); }, TOAST_MS);
+}
+
+/**
+ * An open modal dialog (사진첩·PDF·달력) sits in the browser's top layer, above everything with a z-index,
+ * so the toast was drawn under its dim backdrop. As a manual popover the toast joins the top layer too,
+ * and re-showing it each time puts it above the dialog that is open now.
+ */
+function raiseToast(box) {
+  if (typeof box.showPopover !== "function") return; // older browser: plain fixed toast
+  try {
+    if (box.matches(":popover-open")) box.hidePopover();
+    box.showPopover();
+  } catch { /* not connected yet: stays a plain fixed toast */ }
+}
+
+function lowerToast(box) {
+  try { if (box.matches(":popover-open")) box.hidePopover(); } catch { /* no popover support */ }
 }
 
 // ---------------------------------------------------------------- comments under a card
@@ -791,7 +809,7 @@ function fillDocs(force = false) {
       docsAll().length ? h("button", { class: "text-btn", type: "button", onClick: () => { docSelect = []; fillDocs(true); } }, icon("check", 16), "선택 (병합·이동·삭제)") : null),
     h("p", { class: "album-note" }, docSelect
       ? "고른 순서대로 병합돼요. 원본은 그대로 남아요."
-      : "파일마다 4MB 까지, 팀 모두에게 보여요. 이름을 누르면 열리고, 연필로 페이지를 편집해요."),
+      : "PDF 를 이 창에 끌어다 놓아도 올라가요. 파일마다 4MB 까지, 팀 모두에게 보여요. 이름을 누르면 열리고, 연필로 페이지를 편집해요."),
     docs.length
       ? h("ul", { class: "doc-list", role: "list" }, docs.map(docRowEl))
       : h("p", { class: "folder-empty" }, docsAll().length ? "이 폴더에는 PDF 가 없어요" : "아직 올린 PDF 가 없어요")));
@@ -805,9 +823,46 @@ function openDocs() {
   wireDialog(dialog);
   dialog.addEventListener("close", () => { docsDialog = null; docSelect = null; folderPanel = false; dialog.remove(); });
   dialog.addEventListener("focusout", () => setTimeout(() => { if (docsPending) fillDocs(); }, 250));
+  wireDocDrop(dialog);
   document.body.append(dialog);
   fillDocs(true);
   dialog.showModal();
+}
+
+/**
+ * Drop PDFs anywhere on the open 문서함 (the backdrop belongs to the dialog too) to upload them into the folder being viewed.
+ * Listeners sit on the dialog itself because fillDocs rebuilds everything inside it.
+ */
+function wireDocDrop(dialog) {
+  let depth = 0; // dragenter/leave fire for every child crossed
+  const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes("Files");
+  const setDropping = (on) => dialog.classList.toggle("is-dropping", on);
+  dialog.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth += 1;
+    setDropping(true);
+  });
+  dialog.addEventListener("dragover", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); // without this the browser opens the PDF itself instead of dropping it here
+    e.dataTransfer.dropEffect = "copy";
+  });
+  dialog.addEventListener("dragleave", (e) => {
+    if (!hasFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (!depth) setDropping(false);
+  });
+  dialog.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    setDropping(false);
+    const files = [...(e.dataTransfer.files ?? [])];
+    if (!files.length) return;
+    if (docSelect) { docSelect = null; fillDocs(true); } // leave select mode: the new files land in the plain list
+    addDocs(files);
+  });
 }
 
 // ---------------------------------------------------------------- PDF page editor

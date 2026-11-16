@@ -36,7 +36,8 @@ export function rowsOf(items) {
   const rows = [];
   for (const it of items) {
     if (!it.str || !it.str.trim()) continue;
-    const row = rows.find((r) => Math.abs(r.y - it.y) < ROW_TOLERANCE);
+    // bigger text sits a little lower (합계 label y 95.7 vs its 15pt value y 94.2), so the tolerance grows with the size
+    const row = rows.find((r) => Math.abs(r.y - it.y) < Math.max(ROW_TOLERANCE, (it.fs || 0) * 0.25));
     if (row) row.items.push(it);
     else rows.push({ y: it.y, items: [it] });
   }
@@ -146,6 +147,59 @@ export function receiptMarks(items, measure) {
     }
   }
   return { quads, found, hasBuyer };
+}
+
+// ---------------------------------------------------------------- field extraction (for the CSV)
+
+const FIELD_LABELS = [
+  ["issuer", "카드사/승인번호"], ["cardNo", "카드번호"], ["kind", "거래종류"], ["date", "결제일자"],
+  ["product", "상품명", { lines: true }], ["orderNo", "상품주문번호"],
+  ["seller", "판매자상호", { section: "seller" }], ["ceo", "대표자명", { section: "seller" }],
+  ["bizNo", "사업자등록번호", { section: "seller" }], ["phone", "전화번호", { section: "seller" }],
+  ["address", "사업장주소", { section: "seller", lines: true }],
+  ["approved", "승인금액"], ["supply", "공급가액"], ["vat", "부가세액"], ["service", "봉사료"], ["total", "합계"],
+];
+const plainMeasure = (s) => s.length; // text only: widths do not matter here
+
+/** "80,000" -> 80000; anything without digits -> null. */
+export function amountOf(text) {
+  const digits = String(text ?? "").replace(/[^\d-]/g, "");
+  return /\d/.test(digits) ? Number(digits) : null;
+}
+
+/**
+ * The values of one receipt page as text/numbers, or null when the page is not a 카드 영수증.
+ * 배송비: the 상품 주문번호 of a delivery-fee receipt starts with "DF" (product receipts start with "PD").
+ */
+export function receiptFields(items) {
+  const rows = rowsOf(items).map((r) => {
+    const { label, value } = splitRow(r.items);
+    return { label: label.map((it) => it.str).join("").replace(/\s+/g, ""), value: textOf(charsOf(value, plainMeasure)).replace(/\s+/g, " ").trim() };
+  });
+  const headingAt = (word) => rows.findIndex((r) => r.label.startsWith(word) && r.label.endsWith("정보"));
+  const sellerFrom = headingAt("판매자");
+  const merchantFrom = headingAt("가맹점");
+  const inSeller = (i) => (sellerFrom < 0 || i > sellerFrom) && (merchantFrom < 0 || i < merchantFrom);
+  const raw = {};
+  for (const [key, label, opt = {}] of FIELD_LABELS) {
+    const i = rows.findIndex((r, n) => r.label.startsWith(label) && (opt.section !== "seller" || inSeller(n)));
+    if (i < 0) continue;
+    const parts = [rows[i].value];
+    if (opt.lines) for (let j = i + 1; j < rows.length && !rows[j].label && rows[j].value; j += 1) parts.push(rows[j].value);
+    raw[key] = parts.filter(Boolean).join(" ");
+  }
+  if (["cardNo", "date", "approved"].filter((k) => raw[k]).length < 2) return null; // not a receipt page
+  const [issuer = "", approvalNo = ""] = (raw.issuer ?? "").split("/").map((s) => s.trim());
+  const cardNo = raw.cardNo ?? "";
+  const m4 = cardNo.match(/(\d{4})(?=\s*\(|\s*$)/);
+  const last4 = m4 ? m4[1] : [...cardNo.matchAll(/\d{4}/g)].pop()?.[0] ?? "";
+  const orderNo = raw.orderNo ?? "";
+  return {
+    issuer, approvalNo, cardLast4: last4, kind: raw.kind ?? "", date: raw.date ?? "",
+    product: raw.product ?? "", orderNo, shipping: /^DF/i.test(orderNo),
+    seller: raw.seller ?? "", ceo: raw.ceo ?? "", bizNo: raw.bizNo ?? "", phone: raw.phone ?? "", address: raw.address ?? "",
+    approved: amountOf(raw.approved), supply: amountOf(raw.supply), vat: amountOf(raw.vat), total: amountOf(raw.total),
+  };
 }
 
 /** Highlight geometry the way the hand-marked file has it: quad hugs the glyphs, rect is ~3pt wider. */

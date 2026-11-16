@@ -3,7 +3,8 @@ import { test } from "node:test";
 import zlib from "node:zlib";
 
 import * as lib from "pdf-lib";
-import { buyerSpot, buyerText, charsOf, highlightBox, receiptMarks, rowsOf, splitRow } from "../js/receipt.js";
+import { amountOf, buyerSpot, buyerText, charsOf, highlightBox, receiptFields, receiptMarks, rowsOf, splitRow } from "../js/receipt.js";
+import { DETAIL_HEADERS, cell, csvName, receiptCsv } from "../js/receiptcsv.js";
 import { markReceipt } from "../js/pdfops.js";
 import { addDoc, childDocs, initialState, moveDocs, addDocFolder, parse, removeDocs } from "../js/store.js";
 
@@ -16,7 +17,7 @@ function receiptItems({ longProduct = false, addressHasSeller = true, buyer = fa
   const right = (str, y, fs) => it(str, 538.7 - str.length * (fs ?? 11.2) * 0.5, y, fs);
   const items = [
     it("카드 영수증", 262, 784, 15),
-    it("카드사", 57.7, 727), it("/", 88.8, 727), it("승인번호", 91.7, 727), right("수협 / 12345678", 727),
+    it("카드사", 57.7, 727), it("/", 74.5, 727), it("승인번호", 80.1, 727), right("수협 / 12345678", 727), // label pieces touch, as in the real file
     it("카드번호", 57.7, 704), it("(", 99.1, 704), it("유효기간", 102.7, 704), it(")", 144.1, 704), right("1234-****-****-9876(**/**)", 704),
     it("거래종류", 57.7, 681), right("신용(법인) / 일시불", 681),
     it("결제일자", 57.7, 657), right("2026-11-06 16:01:00", 657),
@@ -160,4 +161,85 @@ test("child PDFs: listed under the parent, follow its folder, stay when the pare
   assert.equal(parse(JSON.stringify(s)).docs.find((d) => d.id === "c").parent, "p");
   const broken = { ...s, docs: [...s.docs, doc("orphan", { parent: "missing" })] };
   assert.equal(parse(JSON.stringify(broken)).docs.find((d) => d.id === "orphan").parent, "");
+});
+
+test("receiptFields reads one receipt page (seller block, not 가맹점), amounts as numbers", () => {
+  const r = receiptFields(receiptItems({ longProduct: true }));
+  assert.equal(r.issuer, "수협");
+  assert.equal(r.approvalNo, "12345678");
+  assert.equal(r.cardLast4, "9876");
+  assert.equal(r.date, "2026-11-06 16:01:00");
+  assert.equal(r.product, "아주 긴 상품 이름 첫 줄입니다 정말 길어서 둘째");
+  assert.equal(r.orderNo, "PD2026");
+  assert.equal(r.shipping, false);
+  assert.deepEqual([r.seller, r.ceo, r.bizNo, r.phone], ["(주)가나상사", "홍길동", "111-22-33333", "010-0000-0000"]);
+  assert.deepEqual([r.approved, r.supply, r.vat, r.total], [4000, 3637, 363, 4000]);
+  assert.equal(receiptFields([it("Hello", 57.7, 700)]), null);
+  assert.equal(amountOf("1,234,000"), 1234000);
+  assert.equal(amountOf("-"), null);
+});
+
+const rec = (extra) => ({ file: "a.pdf", page: 1, issuer: "수협", approvalNo: "0123", cardLast4: "0502", kind: "신용", date: "2025-07-03 14:38:00",
+  product: "차단기", orderNo: "PD1", shipping: false, seller: "주식회사 동승", ceo: "김", bizNo: "609-81-42408", phone: "010", address: "창원",
+  approved: 80000, supply: 72728, vat: 7272, total: 80000, ...extra });
+
+/** Minimal CSV reader for the test (quoted fields, doubled quotes). */
+function readCsv(text) {
+  return text.trimEnd().split("\r\n").map((lineText) => {
+    const out = [];
+    let cur = "";
+    let q = false;
+    for (let i = 0; i < lineText.length; i += 1) {
+      const c = lineText[i];
+      if (q) { if (c === '"' && lineText[i + 1] === '"') { cur += '"'; i += 1; } else if (c === '"') q = false; else cur += c; }
+      else if (c === '"') q = true;
+      else if (c === ",") { out.push(cur); cur = ""; }
+      else cur += c;
+    }
+    out.push(cur);
+    return out;
+  });
+}
+
+test("receiptCsv: summary formulas point at the 상세 rows, 배송비 by DF, sellers grouped", () => {
+  const rows = readCsv(receiptCsv([
+    rec({}),
+    rec({ page: 2, orderNo: "DF9", shipping: true, approved: 3000, supply: 2728, vat: 272 }),
+    rec({ page: 3, seller: "신태양전력", product: "콘센트", approved: 27000, supply: 24546, vat: 2454 }),
+  ], { madeAt: "2026-11-16 20:00", files: ["a.pdf"] }));
+  const at = (label) => rows.find((r) => r[0] === label);
+  const head = rows.findIndex((r) => r[0] === "번호");
+  assert.deepEqual(rows[head], DETAIL_HEADERS);
+  const d0 = head + 2; // Excel rows are 1-based
+  const d1 = d0 + 2;
+  assert.equal(at("승인금액")[1], `=SUM(O${d0}:O${d1})`);
+  assert.equal(at("배송비")[1], `=SUMIF(B${d0}:B${d1},"배송비",O${d0}:O${d1})`);
+  assert.equal(at("승인금액-배송비")[1], "=B4-B5");
+  assert.equal(at("부가세액")[2], "부가세대급금");
+  assert.equal(at("대변금액")[1], "=B7+B8");
+  assert.equal(at("대변금액")[2], "미지급비용(기타)");
+  assert.equal(at("검산(승인금액-대변금액)")[1], "=B4-B9");
+  assert.equal(at("상품명")[1], "차단기 외 1건"); // the 배송비 receipt is not a product
+  // 판매자별: one row per seller (detail rows start with their 번호), formulas reference their own row
+  assert.equal(rows.filter((r) => r[0] === "주식회사 동승" || r[0] === "신태양전력").length, 2);
+  const firstSeller = rows.findIndex((r) => r[0] === "주식회사 동승");
+  assert.equal(rows[firstSeller][6], `=SUMIF($J$${d0}:$J$${d1},$A${firstSeller + 1},$O$${d0}:$O$${d1})`);
+  // detail row: codes stay text, amounts are numbers, per-row check formulas
+  const d = rows[head + 1];
+  assert.deepEqual([d[0], d[1], d[4], d[5], d[14], d[17], d[18]], ["1", "상품", '="0123"', '="0502"', "80000", `=P${d0}+Q${d0}`, `=O${d0}-R${d0}`]);
+  assert.equal(rows[head + 2][1], "배송비");
+  const total = rows.at(-1);
+  assert.deepEqual([total[0], total[14], total[15], total[16]], ["합계", `=SUM(O${d0}:O${d1})`, `=SUM(P${d0}:P${d1})`, `=SUM(Q${d0}:Q${d1})`]);
+});
+
+test("cell guards text that Excel would run, quotes when needed; csvName", () => {
+  assert.equal(cell("=HYPERLINK(1)"), "'=HYPERLINK(1)");
+  assert.equal(cell("-3"), "'-3");
+  assert.equal(cell({ formula: "=A1+B1" }), "=A1+B1");
+  assert.equal(cell('a,"b"'), '"a,""b"""');
+  assert.equal(cell(12997), "12997");
+  assert.equal(cell(null), "");
+  assert.throws(() => receiptCsv([]), /찾지 못했어요/);
+  assert.equal(csvName(["카드영수증"]), "카드영수증_정리.csv");
+  assert.equal(csvName(["a", "b"], new Date(2026, 10, 16)), "카드영수증_정리_20261116.csv");
 });

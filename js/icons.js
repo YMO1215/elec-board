@@ -23,6 +23,8 @@ const PATHS = {
   restore: "M5 12a7 7 0 1 0 2.1-5M5 4.5V9h4.5",
   // highlighter pen over a line: 구매자 이름 + 형광 표시본
   marker: "M8.5 14.5l7.6-7.6a2.1 2.1 0 0 1 3 3L11.5 17.5M8.5 14.5l3 3M8.5 14.5L6 17v2h3.5l2-1.5M14 20.5h6",
+  // a small grid: 영수증 정리 CSV
+  table: "M5 4.5h14A1.5 1.5 0 0 1 20.5 6v12a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18V6A1.5 1.5 0 0 1 5 4.5zM3.5 9.5h17M3.5 14.5h17M9.5 9.5v10",
   // clockwise arrow: rotate a PDF page 90°
   rotate: "M19 12a7 7 0 1 1-2.1-5M19 4.5V9h-4.5",
 };

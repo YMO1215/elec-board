@@ -14,7 +14,8 @@ import {
 import { MAX_DOC_BYTES, deleteDocFiles, docProblem, docSrc, fetchDoc, uploadDoc } from "./doc.js";
 import { editPdf, markReceipt, mergePdfs, normAngle, planChanged } from "./pdfops.js";
 import { loadPdfLib, pageTexts, textMeasurer, textPicture, thumbnails } from "./pdfkit.js";
-import { BUYER, buyerSpot, buyerText, highlightBox, receiptMarks } from "./receipt.js";
+import { BUYER, buyerSpot, buyerText, highlightBox, receiptFields, receiptMarks } from "./receipt.js";
+import { csvName, receiptCsv } from "./receiptcsv.js";
 import { POLL_MS, createSync } from "./sync.js";
 import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
 import { makeZip } from "./zip.js";
@@ -710,6 +711,7 @@ function docRowEl(doc) {
   return h("li", { class: `doc-row${doc.parent ? " is-child" : ""}`, dataset: { id: doc.id } },
     h("a", { class: "doc-open", href: docSrc(doc.url, doc.name, boardKey), target: "_blank", rel: "noopener", "aria-label": `“${doc.name}” 열기` }, main),
     doc.parent ? null : h("button", { class: "icon-btn", type: "button", title: "구매자 표시본 만들기", "aria-label": `“${doc.name}” 구매자 이름 + 형광 표시본 만들기`, onClick: () => openBuyerDialog(doc.id) }, icon("marker")),
+    doc.parent ? null : h("button", { class: "icon-btn", type: "button", title: "영수증 정리 CSV 받기", "aria-label": `“${doc.name}” 영수증 정리 CSV 내려받기`, onClick: () => exportReceiptCsv([doc.id]) }, icon("table")),
     h("button", { class: "icon-btn", type: "button", "aria-label": `“${doc.name}” 편집`, onClick: () => openDocEditor(doc.id) }, icon("edit")),
     h("button", { class: "icon-btn", type: "button", "aria-label": `“${doc.name}” 내려받기`, onClick: () => downloadDoc(doc) }, icon("download")),
     armed(h("button", { class: "icon-btn is-delete", type: "button", "aria-label": `“${doc.name}” 삭제` }, icon("trash")), "삭제", () => deleteDocs([doc.id])));
@@ -782,6 +784,7 @@ function selectBar() {
   return h("div", { class: "doc-selbar" },
     h("span", { class: "doc-selcount" }, n ? `${n}개 선택` : "PDF 를 고르세요"),
     h("button", { class: "text-btn", type: "button", disabled: n < 2 ? true : null, onClick: mergeSelected }, "병합"),
+    h("button", { class: "text-btn", type: "button", disabled: n ? null : true, title: "고른 영수증 PDF 를 한 CSV 로 정리", onClick: () => exportReceiptCsv([...docSelect]) }, "CSV"),
     move,
     n ? armed(h("button", { class: "text-btn danger", type: "button" }, "삭제"), `${n}개 삭제`, async () => {
       if (await deleteDocs([...docSelect])) { docSelect = null; fillDocs(true); }
@@ -944,6 +947,36 @@ function openBuyerDialog(id) {
   dialog.showModal();
   input.focus();
   input.select();
+}
+
+/**
+ * 영수증 정리 CSV: every receipt page of the given PDFs → one CSV (요약 · 판매자별 · 상세, totals as Excel formulas).
+ * A 구매자 표시본 picked together with its original is skipped (same receipts twice).
+ */
+async function exportReceiptCsv(ids) {
+  const picked = new Set(ids);
+  const docs = ids.map(docOf).filter((d) => d && !(d.parent && picked.has(d.parent)));
+  if (!docs.length) return;
+  toast(docs.length > 1 ? `PDF ${docs.length}개에서 영수증 읽는 중…` : "영수증 읽는 중…");
+  try {
+    const receipts = [];
+    for (const doc of docs) {
+      const pages = await pageTexts(await docBytes(doc));
+      pages.forEach((p, i) => {
+        const r = receiptFields(p.items);
+        if (r) receipts.push({ file: doc.name, page: i + 1, ...r });
+      });
+    }
+    if (!receipts.length) throw new Error("카드 영수증 내용을 찾지 못했어요");
+    const now = new Date();
+    const madeAt = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())} ${two(now.getHours())}:${two(now.getMinutes())}`;
+    const csv = receiptCsv(receipts, { madeAt, files: docs.map((d) => d.name) });
+    saveBlob(new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }), `${fileSafe(csvName(docs.map((d) => d.name), now).replace(/\.csv$/, ""), "영수증정리")}.csv`); // trim the name, never the extension
+    const total = receipts.reduce((n, r) => n + (r.approved ?? 0), 0);
+    toast(`영수증 ${receipts.length}장 정리 CSV 를 받았어요 (승인금액 ${total.toLocaleString("ko-KR")}원)`);
+  } catch (err) {
+    toast(`CSV 를 만들지 못했어요 — ${err.message}`);
+  }
 }
 
 // ---------------------------------------------------------------- PDF page editor

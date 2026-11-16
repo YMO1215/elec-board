@@ -9,12 +9,14 @@ import {
   activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
   DONE_FOLDER_DAYS, PHOTO_MONTHS, doneFolderCutoff, doneFolderDaysLeft, dropPhotos, expiredPhotos, photoCutoff, photoUrlsOf,
   TRASH_DAYS, removePhoto, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
+  MAX_DOCS, addDoc, removeDoc,
 } from "./store.js";
+import { deleteDocFiles, docProblem, docSrc, fetchDoc, uploadDoc } from "./doc.js";
 import { POLL_MS, createSync } from "./sync.js";
 import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
 import { makeZip } from "./zip.js";
 import { SITE, fetchTwilight, twilightText } from "./twilight.js";
-import { fetchUsage, usageEl } from "./usage.js";
+import { fetchUsage, formatBytes, usageEl } from "./usage.js";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const DRAG_THRESHOLD = 3;
@@ -560,6 +562,99 @@ function releasePhotoFiles(tasks) {
   if (urls.length) deletePhotoFiles(urls, { key: boardKey }).catch(() => {});
 }
 
+// ---------------------------------------------------------------- PDF 문서함 (next to 사진첩)
+// One board-wide list shared with the team. Tap a row to open the PDF in the browser's viewer.
+
+let docsDialog = null;
+const docPicker = h("input", { type: "file", accept: "application/pdf,.pdf", multiple: true, hidden: true, "aria-hidden": "true", tabindex: "-1" });
+docPicker.addEventListener("change", () => {
+  const files = [...docPicker.files];
+  docPicker.value = ""; // picking the same file again must fire change again
+  if (files.length) addDocs(files);
+});
+document.body.append(docPicker);
+
+async function addDocs(files) {
+  let added = 0;
+  for (const file of files) {
+    if ((state.docs ?? []).length >= MAX_DOCS) { toast(`PDF 는 ${MAX_DOCS}개까지예요`); break; }
+    const problem = docProblem(file);
+    if (problem) { toast(`${file.name} — ${problem}`); continue; }
+    toast(files.length > 1 ? `PDF 올리는 중… ${added + 1}/${files.length}` : "PDF 올리는 중…");
+    try {
+      const name = String(file.name ?? "").replace(/\.pdf$/i, "").trim() || "문서";
+      const url = await uploadDoc(file, { name, key: boardKey });
+      const doc = { id: newId(), url, at: new Date().toISOString(), name, size: file.size }; // fixed outside the op so a retried op is identical
+      commit((s) => addDoc(s, doc));
+      added += 1;
+    } catch (err) {
+      toast(`PDF 를 올리지 못했어요 — ${err.message}`);
+      return;
+    }
+  }
+  if (added) toast(added > 1 ? `PDF ${added}개를 올렸어요` : "PDF 를 올렸어요");
+  refreshUsage();
+}
+
+async function downloadDoc(doc) {
+  try {
+    saveBlob(await fetchDoc(doc.url, boardKey), `${fileSafe(doc.name, "문서")}.pdf`);
+  } catch (err) {
+    toast(`내려받지 못했어요 — ${err.message}`);
+  }
+}
+
+function docRowEl(doc) {
+  const d = new Date(doc.at);
+  const when = `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`;
+  return h("li", { class: "doc-row", dataset: { id: doc.id } },
+    h("a", { class: "doc-open", href: docSrc(doc.url, doc.name, boardKey), target: "_blank", rel: "noopener", "aria-label": `“${doc.name}” 열기` },
+      h("span", { class: "doc-icon", "aria-hidden": "true" }, icon("doc", 20)),
+      h("span", { class: "doc-main" },
+        h("span", { class: "doc-name" }, doc.name),
+        h("span", { class: "doc-sub" }, doc.size ? `${when} · ${formatBytes(doc.size)}` : when))),
+    h("button", { class: "icon-btn", type: "button", "aria-label": `“${doc.name}” 내려받기`, onClick: () => downloadDoc(doc) }, icon("download")),
+    armed(h("button", { class: "icon-btn is-delete", type: "button", "aria-label": `“${doc.name}” 삭제` }, icon("trash")), "삭제", async () => {
+      try {
+        await deleteDocFiles([doc.url], { key: boardKey }); // the file goes first; the record stays if this fails
+      } catch (err) {
+        toast(`PDF 를 지우지 못했어요 — ${err.message}`);
+        return;
+      }
+      commit((s) => removeDoc(s, doc.id));
+      toast("PDF 를 지웠어요");
+      refreshUsage();
+    }));
+}
+
+function fillDocs() {
+  if (!docsDialog) return;
+  const scroll = docsDialog.scrollTop;
+  const docs = [...(state.docs ?? [])].sort((a, b) => (a.at < b.at ? 1 : -1)); // newest first
+  docsDialog.replaceChildren(h("div", { class: "album-inner" },
+    h("header", { class: "album-head" },
+      h("h2", { class: "cal-title" }, "PDF"),
+      h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: () => animateClose(docsDialog) }, icon("x"))),
+    h("div", { class: "folder-actions" },
+      h("button", { class: "text-btn", type: "button", "aria-label": "PDF 파일 올리기", onClick: () => docPicker.click() }, icon("plus", 16), "PDF 올리기")),
+    h("p", { class: "album-note" }, "파일마다 4MB 까지 올릴 수 있어요. 팀 모두에게 보여요. 이름을 누르면 열려요."),
+    docs.length
+      ? h("ul", { class: "doc-list", role: "list" }, docs.map(docRowEl))
+      : h("p", { class: "folder-empty" }, "아직 올린 PDF 가 없어요")));
+  docsDialog.scrollTop = scroll;
+}
+
+function openDocs() {
+  if (docsDialog) return;
+  const dialog = h("dialog", { class: "cal album docs", "aria-label": "PDF" });
+  docsDialog = dialog;
+  wireDialog(dialog);
+  dialog.addEventListener("close", () => { docsDialog = null; dialog.remove(); });
+  document.body.append(dialog);
+  fillDocs();
+  dialog.showModal();
+}
+
 /** A card that just landed somewhere (drag, sheet, keyboard) gets a short ring so the eye can find it. */
 function flash(id) {
   replay(document.querySelector(`.note[data-id="${id}"]`), "just-dropped");
@@ -1042,6 +1137,7 @@ function render() {
   pendingRender = false;
   if (!busy()) state = sync.mode === "shared" ? sync.view() : local;
   fillAlbum(); // the album (if open) follows the board
+  fillDocs(); // so does the PDF 문서함
   const active = state.tasks.filter((t) => !t.done && !t.deletedAt).length;
   const done = doneOf(state).length;
   const nActive = document.getElementById("nActive");
@@ -1585,6 +1681,8 @@ function stamp() {
 document.getElementById("stamp").addEventListener("click", () => openCalendar({ people: state.people, today: todayIso() }));
 document.getElementById("albumBtn").prepend(icon("album", 18));
 document.getElementById("albumBtn").addEventListener("click", () => openAlbum());
+document.getElementById("docBtn").prepend(icon("doc", 18));
+document.getElementById("docBtn").addEventListener("click", () => openDocs());
 
 // Board <-> completed list. The list has its own history entry (#done) so Back returns to the board.
 function setView(next, { push = true } = {}) {

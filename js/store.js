@@ -14,7 +14,7 @@ const DEFAULT_PEOPLE = [
 ];
 
 export function initialState() {
-  return { version: 1, people: DEFAULT_PEOPLE.map((p) => ({ ...p })), tasks: [], contacts: [], categories: [] };
+  return { version: 1, people: DEFAULT_PEOPLE.map((p) => ({ ...p })), tasks: [], contacts: [], categories: [], docs: [] };
 }
 
 export function owners(state) {
@@ -226,6 +226,31 @@ export function removePhoto(state, taskId, photoId) {
   return { ...state, tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, photos } : t)) };
 }
 
+// PDF 문서함: one board-wide list (not per task). Files are in Vercel Blob under docs/, the board keeps the records.
+export const MAX_DOCS = 200;
+const DOC_HOST = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\/docs\//;
+
+function cleanDocName(name) {
+  return String(name ?? "").trim().slice(0, 80) || "문서";
+}
+
+function docRow(d) {
+  return { id: d.id, url: d.url, at: d.at, name: cleanDocName(d.name), size: Math.max(0, Math.round(Number(d.size) || 0)) };
+}
+
+/** Add an uploaded PDF. `id`, `at` and `name` are fixed by the caller so a retried op is identical. */
+export function addDoc(state, doc) {
+  const docs = state.docs ?? [];
+  if (!doc || typeof doc.id !== "string" || !DOC_HOST.test(doc.url ?? "") || docs.length >= MAX_DOCS || docs.some((d) => d.id === doc.id)) return state;
+  return { ...state, docs: [...docs, docRow(doc)] };
+}
+
+export function removeDoc(state, id) {
+  const docs = state.docs ?? [];
+  if (!docs.some((d) => d.id === id)) return state;
+  return { ...state, docs: docs.filter((d) => d.id !== id) };
+}
+
 export const MAX_CONTACTS = 300;
 const MAX_CONTACT_FIELD = 60;
 const MAX_CONTACT_MEMO = 200;
@@ -378,6 +403,15 @@ function cleanPhotos(raw) {
     .slice(0, MAX_PHOTOS);
 }
 
+function cleanDocs(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  return raw
+    .filter((d) => d && typeof d.id === "string" && typeof d.url === "string" && DOC_HOST.test(d.url) && typeof d.at === "string" && ISO_TIME.test(d.at) && !seen.has(d.id) && seen.add(d.id))
+    .map(docRow)
+    .slice(0, MAX_DOCS);
+}
+
 function cleanCategories(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
@@ -430,7 +464,7 @@ export function parse(raw) {
         deletedAt: typeof t.deletedAt === "string" && ISO_TIME.test(t.deletedAt) ? t.deletedAt : null,
       }));
     const categories = cleanCategories(data.categories);
-    return { version: 1, people, tasks, contacts: cleanContacts(data.contacts, categories), categories };
+    return { version: 1, people, tasks, contacts: cleanContacts(data.contacts, categories), categories, docs: cleanDocs(data.docs) };
   } catch {
     return initialState();
   }

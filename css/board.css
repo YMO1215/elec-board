@@ -774,6 +774,13 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
   background: var(--tint); color: #fff;
   font-size: 15px; line-height: 20px; font-weight: 600;
 }
+/* a file made from another one (구매자 표시본) sits indented under it, joined by a short line */
+.doc-row.is-child { position: relative; margin-left: 28px; background: color-mix(in srgb, var(--tint) 6%, var(--secondary-background)); }
+.doc-row.is-child::before { content: ""; position: absolute; left: -16px; top: -8px; width: 10px; height: calc(50% + 8px); border-left: 1.5px solid var(--separator); border-bottom: 1.5px solid var(--separator); border-bottom-left-radius: 6px; }
+.doc-row.is-child .doc-icon { color: var(--secondary-label); }
+.buyer-sheet .contact-input { width: 100%; }
+.buyer-preview { margin: 0; padding: 10px 12px; border-radius: var(--r-card); background: #fff; color: #f00; font-size: 20px; line-height: 26px; font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.buyer-sheet .folder-actions .spacer { flex: 1; }
 .doc-row button.doc-open { padding: 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
 .doc-row.is-picked { box-shadow: inset 0 0 0 2px var(--tint); }
 .doc-check { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--separator); font-size: 13px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }

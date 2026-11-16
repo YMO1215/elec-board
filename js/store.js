@@ -239,7 +239,19 @@ function docRow(d, folderIds) {
   return {
     id: d.id, url: d.url, at: d.at, name: cleanDocName(d.name), size: Math.max(0, Math.round(Number(d.size) || 0)),
     folder: typeof d.folder === "string" && folderIds.has(d.folder) ? d.folder : "",
+    parent: typeof d.parent === "string" ? d.parent : "", // made from another PDF (e.g. 구매자 표시본): listed under it
   };
+}
+
+/** One level only: a parent must exist and must not itself be a child. Anything else becomes a top-level PDF. */
+function fixParents(docs) {
+  const top = new Set(docs.filter((d) => !d.parent).map((d) => d.id));
+  return docs.map((d) => (d.parent && !top.has(d.parent) ? { ...d, parent: "" } : d));
+}
+
+/** A PDF's children (files made from it), in the order they were made. */
+export function childDocs(state, id) {
+  return (state.docs ?? []).filter((d) => d.parent === id);
 }
 
 const folderIdsOf = (state) => new Set((state.docFolders ?? []).map((f) => f.id));
@@ -248,7 +260,9 @@ const folderIdsOf = (state) => new Set((state.docFolders ?? []).map((f) => f.id)
 export function addDoc(state, doc) {
   const docs = state.docs ?? [];
   if (!doc || typeof doc.id !== "string" || !DOC_HOST.test(doc.url ?? "") || docs.length >= MAX_DOCS || docs.some((d) => d.id === doc.id)) return state;
-  return { ...state, docs: [...docs, docRow(doc, folderIdsOf(state))] };
+  const parent = doc.parent ? docs.find((d) => d.id === doc.parent) : null;
+  const row = docRow({ ...doc, folder: parent ? parent.folder : doc.folder }, folderIdsOf(state)); // a child lives in its parent's folder
+  return { ...state, docs: fixParents([...docs, row]) };
 }
 
 export function removeDoc(state, id) {
@@ -259,7 +273,7 @@ export function removeDocs(state, ids) {
   const gone = new Set(ids);
   const docs = state.docs ?? [];
   if (!docs.some((d) => gone.has(d.id))) return state;
-  return { ...state, docs: docs.filter((d) => !gone.has(d.id)) };
+  return { ...state, docs: fixParents(docs.filter((d) => !gone.has(d.id))) }; // children of a deleted PDF stay, as top-level PDFs
 }
 
 export function renameDoc(state, id, name) {
@@ -279,10 +293,12 @@ export function replaceDocFile(state, id, { url, size }) {
 /** Move PDFs into a folder ("" = 미분류). */
 export function moveDocs(state, ids, folder) {
   const target = folder && folderIdsOf(state).has(folder) ? folder : "";
-  const moving = new Set(ids);
   const docs = state.docs ?? [];
+  const moving = new Set(ids);
+  for (const d of docs) if (d.parent && moving.has(d.parent)) moving.add(d.id); // children go with their parent
   if (!docs.some((d) => moving.has(d.id) && d.folder !== target)) return state;
-  return { ...state, docs: docs.map((d) => (moving.has(d.id) ? { ...d, folder: target } : d)) };
+  const parentStays = (d) => d.parent && !moving.has(d.parent); // a child moved away on its own leaves its parent
+  return { ...state, docs: docs.map((d) => (moving.has(d.id) ? { ...d, folder: target, parent: parentStays(d) ? "" : d.parent } : d)) };
 }
 
 // 문서함 folders. Deleting a folder keeps its PDFs: they become 미분류 (same rule as 연락처 분류).
@@ -480,10 +496,10 @@ function cleanDocs(raw, folders) {
   if (!Array.isArray(raw)) return [];
   const seen = new Set();
   const folderIds = new Set(folders.map((f) => f.id));
-  return raw
+  return fixParents(raw
     .filter((d) => d && typeof d.id === "string" && typeof d.url === "string" && DOC_HOST.test(d.url) && typeof d.at === "string" && ISO_TIME.test(d.at) && !seen.has(d.id) && seen.add(d.id))
     .map((d) => docRow(d, folderIds))
-    .slice(0, MAX_DOCS);
+    .slice(0, MAX_DOCS));
 }
 
 function cleanCategories(raw) {

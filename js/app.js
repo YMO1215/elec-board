@@ -9,11 +9,12 @@ import {
   activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
   DONE_FOLDER_DAYS, PHOTO_MONTHS, doneFolderCutoff, doneFolderDaysLeft, dropPhotos, expiredPhotos, photoCutoff, photoUrlsOf,
   TRASH_DAYS, removePhoto, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
-  MAX_DOCS, MAX_DOC_FOLDERS, addDoc, addDocFolder, moveDocs, removeDocFolder, removeDocs, renameDoc, renameDocFolder, replaceDocFile,
+  MAX_DOCS, MAX_DOC_FOLDERS, addDoc, addDocFolder, childDocs, moveDocs, removeDocFolder, removeDocs, renameDoc, renameDocFolder, replaceDocFile,
 } from "./store.js";
 import { MAX_DOC_BYTES, deleteDocFiles, docProblem, docSrc, fetchDoc, uploadDoc } from "./doc.js";
-import { editPdf, mergePdfs, normAngle, planChanged } from "./pdfops.js";
-import { loadPdfLib, thumbnails } from "./pdfkit.js";
+import { editPdf, markReceipt, mergePdfs, normAngle, planChanged } from "./pdfops.js";
+import { loadPdfLib, pageTexts, textMeasurer, textPicture, thumbnails } from "./pdfkit.js";
+import { BUYER, buyerSpot, buyerText, highlightBox, receiptMarks } from "./receipt.js";
 import { POLL_MS, createSync } from "./sync.js";
 import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
 import { makeZip } from "./zip.js";
@@ -702,12 +703,13 @@ function docRowEl(doc) {
   ];
   if (docSelect) {
     const order = docSelect.indexOf(doc.id);
-    return h("li", { class: `doc-row${order >= 0 ? " is-picked" : ""}`, dataset: { id: doc.id } },
+    return h("li", { class: `doc-row${doc.parent ? " is-child" : ""}${order >= 0 ? " is-picked" : ""}`, dataset: { id: doc.id } },
       h("button", { class: "doc-open", type: "button", "aria-pressed": order >= 0 ? "true" : "false", "aria-label": `“${doc.name}” ${order >= 0 ? `선택됨 ${order + 1}번째` : "선택"}`, onClick: () => toggleSelect(doc.id) },
         h("span", { class: "doc-check", "aria-hidden": "true" }, order >= 0 ? String(order + 1) : ""), main));
   }
-  return h("li", { class: "doc-row", dataset: { id: doc.id } },
+  return h("li", { class: `doc-row${doc.parent ? " is-child" : ""}`, dataset: { id: doc.id } },
     h("a", { class: "doc-open", href: docSrc(doc.url, doc.name, boardKey), target: "_blank", rel: "noopener", "aria-label": `“${doc.name}” 열기` }, main),
+    doc.parent ? null : h("button", { class: "icon-btn", type: "button", title: "구매자 표시본 만들기", "aria-label": `“${doc.name}” 구매자 이름 + 형광 표시본 만들기`, onClick: () => openBuyerDialog(doc.id) }, icon("marker")),
     h("button", { class: "icon-btn", type: "button", "aria-label": `“${doc.name}” 편집`, onClick: () => openDocEditor(doc.id) }, icon("edit")),
     h("button", { class: "icon-btn", type: "button", "aria-label": `“${doc.name}” 내려받기`, onClick: () => downloadDoc(doc) }, icon("download")),
     armed(h("button", { class: "icon-btn is-delete", type: "button", "aria-label": `“${doc.name}” 삭제` }, icon("trash")), "삭제", () => deleteDocs([doc.id])));
@@ -795,9 +797,11 @@ function fillDocs(force = false) {
   if (docFolder !== "all" && docFolder !== "none" && !docFolders().some((f) => f.id === docFolder)) docFolder = "all"; // that folder is gone
   if (docSelect) docSelect = docSelect.filter((id) => docOf(id)); // drop PDFs someone else deleted
   const scroll = docsDialog.scrollTop;
+  // originals newest first, each followed by the files made from it (oldest first), which follow its folder
   const docs = docsAll()
-    .filter((d) => docFolder === "all" || (docFolder === "none" ? !d.folder : d.folder === docFolder))
-    .sort((a, b) => (a.at < b.at ? 1 : -1)); // newest first
+    .filter((d) => !d.parent && (docFolder === "all" || (docFolder === "none" ? !d.folder : d.folder === docFolder)))
+    .sort((a, b) => (a.at < b.at ? 1 : -1))
+    .flatMap((d) => [d, ...childDocs(state, d.id).sort((a, b) => (a.at < b.at ? -1 : 1))]);
   docsDialog.replaceChildren(h("div", { class: "album-inner" },
     h("header", { class: "album-head" },
       h("h2", { class: "cal-title" }, "PDF"),
@@ -863,6 +867,83 @@ function wireDocDrop(dialog) {
     if (docSelect) { docSelect = null; fillDocs(true); } // leave select mode: the new files land in the plain list
     addDocs(files);
   });
+}
+
+// ---------------------------------------------------------------- 카드 영수증: 구매자 이름 + 형광 표시본
+// Same marks the owner made by hand (see js/receipt.js). The result is a new PDF listed under the original.
+
+const BUYER_KEY = "magnet-board:buyer"; // the last name typed, per device
+
+/** Build the marked copy of `doc` for `name`; returns the new record (already uploaded and committed). */
+async function makeBuyerCopy(doc, name) {
+  const [bytes, lib] = await Promise.all([docBytes(doc), loadPdfLib()]);
+  const pages = await pageTexts(bytes);
+  const measure = textMeasurer();
+  const marks = pages.map((p) => receiptMarks(p.items, measure));
+  if (!marks.some((m) => m.found >= 3)) throw new Error("카드 영수증 형식이 아니에요 (카드번호·결제일자 같은 항목을 찾지 못했어요)");
+  if (marks[0]?.hasBuyer) throw new Error("이 파일 첫 장에 이미 구매자 표시가 있어요 — 표시 없는 원본에서 만들어 주세요");
+  const first = pages[0];
+  const spot = buyerSpot(first.width, first.height);
+  const pic = await textPicture(buyerText(name), { size: spot.size, color: `rgb(${BUYER.color.map((c) => c * 255).join(",")})` });
+  const buyer = { png: pic.png, x: spot.x - pic.left, y: spot.baseline - pic.descent, width: pic.width, height: pic.height };
+  const out = new Blob([await markReceipt(lib, bytes, marks.map((m) => m.quads.map(highlightBox)), buyer)], { type: "application/pdf" });
+  const fileName = `${doc.name} - 구매자 ${name}`.slice(0, 80);
+  const url = await uploadDocBlob(out, fileName);
+  const record = { id: newId(), url, at: new Date().toISOString(), name: fileName, size: out.size, folder: doc.folder, parent: doc.id };
+  if (addDoc(state, record) === state) { // only the PDF count limit refuses it (a vanished parent just makes it top-level)
+    deleteDocFiles([url], { key: boardKey }).catch(() => {});
+    throw new Error(`PDF 는 ${MAX_DOCS}개까지예요`);
+  }
+  commit((s) => addDoc(s, record));
+  return { record, highlights: marks.reduce((n, m) => n + m.quads.length, 0), pages: pages.length };
+}
+
+function openBuyerDialog(id) {
+  const doc = docOf(id);
+  if (!doc) return;
+  if (docsAll().length >= MAX_DOCS) { toast(`PDF 는 ${MAX_DOCS}개까지예요`); return; }
+  let last = "";
+  try { last = storage.getItem(BUYER_KEY) ?? ""; } catch { /* storage blocked */ }
+  const dialog = h("dialog", { class: "cal album buyer-sheet", "aria-label": "구매자 표시본 만들기" });
+  const close = () => animateClose(dialog);
+  const input = h("input", { class: "contact-input", type: "text", value: last, maxlength: 20, placeholder: "구매자 이름", "aria-label": "구매자 이름", autocomplete: "name" });
+  const preview = h("p", { class: "buyer-preview", "aria-hidden": "true" }, buyerText(last || "이름"));
+  const go = h("button", { class: "text-btn doc-save", type: "button" }, "만들기");
+  input.addEventListener("input", () => { preview.textContent = buyerText(input.value.trim() || "이름"); });
+  const run = async () => {
+    const name = input.value.trim();
+    if (!name) { input.focus(); toast("구매자 이름을 입력하세요"); return; }
+    go.disabled = true;
+    input.disabled = true;
+    try { storage.setItem(BUYER_KEY, name); } catch { /* remembered for this visit only */ }
+    toast("구매자 표시본 만드는 중…");
+    try {
+      const made = await makeBuyerCopy(doc, name);
+      close();
+      toast(`“${made.record.name}” 을 만들었어요 (${made.pages}쪽, 형광 ${made.highlights}곳)`);
+      refreshUsage();
+    } catch (err) {
+      toast(`만들지 못했어요 — ${err.message}`);
+      go.disabled = false;
+      input.disabled = false;
+    }
+  };
+  go.addEventListener("click", run);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); run(); } });
+  dialog.append(h("div", { class: "album-inner" },
+    h("header", { class: "album-head" },
+      h("h2", { class: "cal-title" }, "구매자 표시본"),
+      h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: close }, icon("x"))),
+    h("p", { class: "album-note" }, `“${doc.name}” 첫 장 왼쪽 위에 빨간 구매자 이름을 넣고, 모든 장의 카드번호 끝 4자리·결제일자·상품명·판매자 정보·공급가액·부가세액에 노란 형광 표시를 해서 새 파일로 만들어요. 새 파일은 원본 아래에 보여요.`),
+    input,
+    preview,
+    h("div", { class: "folder-actions" }, h("span", { class: "spacer" }), h("button", { class: "text-btn quiet", type: "button", onClick: close }, "취소"), go)));
+  wireDialog(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+  input.focus();
+  input.select();
 }
 
 // ---------------------------------------------------------------- PDF page editor

@@ -8,7 +8,7 @@ import { MAX_DOCS, addDoc, initialState, parse, removeDoc } from "../js/store.js
 const URL1 = "https://abc123.public.blob.vercel-storage.com/docs/점검표-xyz.pdf";
 const AT = "2026-11-16T01:00:00.000Z";
 const pdf = (n = 100) => Buffer.concat([Buffer.from("%PDF-1.7\n", "latin1"), Buffer.alloc(n)]);
-const doc = (id, extra = {}) => ({ id, url: URL1, at: AT, name: "점검표", size: 1234, folder: "", ...extra });
+const doc = (id, extra = {}) => ({ id, url: URL1, at: AT, name: "점검표", size: 1234, folder: "", parent: "", ...extra });
 
 test("handleDocUpload stores a PDF under docs/ with a random suffix", async () => {
   const calls = [];

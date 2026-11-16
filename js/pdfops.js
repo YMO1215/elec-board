@@ -44,6 +44,53 @@ export async function editPdf(lib, bytes, plan) {
   return out.save();
 }
 
+/**
+ * 카드 영수증 marking: yellow Highlight annotations (as a PDF viewer / PyMuPDF makes them: QuadPoints + a Multiply
+ * appearance, so they print and show everywhere) on each page, and the "구매자 : 이름" picture on the first page.
+ * `pages[i]` = [{ quad, rect }] from receipt.highlightBox; `buyer` = { png: Uint8Array, x, y, width, height } or null.
+ * Earlier highlights on the page are removed first, so marking twice does not stack them. Returns Uint8Array.
+ */
+export async function markReceipt(lib, bytes, pages, buyer) {
+  const doc = await open(lib, bytes);
+  const { PDFName, PDFArray, PDFDict } = lib;
+  const ctx = doc.context;
+  const docPages = doc.getPages();
+  docPages.forEach((page, i) => {
+    const old = page.node.lookup(PDFName.of("Annots"));
+    const keep = [];
+    if (old instanceof PDFArray) {
+      const isHighlight = (d) => d instanceof PDFDict && d.get(PDFName.of("Subtype"))?.toString() === "/Highlight";
+      for (const ref of old.asArray()) {
+        const a = ctx.lookup(ref);
+        const st = a instanceof PDFDict ? a.get(PDFName.of("Subtype"))?.toString() : "";
+        if (st === "/Highlight") continue;
+        if (st === "/Popup" && isHighlight(ctx.lookup(a.get(PDFName.of("Parent"))))) continue; // a removed highlight's note
+        keep.push(ref);
+      }
+    }
+    for (const { quad, rect } of pages[i] ?? []) {
+      const [x0, top, x1, , , bottom] = quad;
+      const ap = ctx.stream(`/H gs ${HL_RGB} rg ${x0} ${top} m ${x1} ${top} l ${x1} ${bottom} l ${x0} ${bottom} l f`, {
+        Type: "XObject", Subtype: "Form", BBox: rect, Matrix: [1, 0, 0, 1, 0, 0],
+        Resources: { ExtGState: { H: { BM: "Multiply" } } },
+      });
+      const annot = ctx.obj({
+        Type: "Annot", Subtype: "Highlight", Rect: rect, QuadPoints: quad, C: HL_COLOR, F: 4, BM: "Multiply",
+        P: page.ref, AP: { N: ctx.register(ap) },
+      });
+      keep.push(ctx.register(annot));
+    }
+    if (keep.length || old) page.node.set(PDFName.of("Annots"), ctx.obj(keep));
+  });
+  if (buyer && docPages[0]) {
+    const img = await doc.embedPng(buyer.png);
+    docPages[0].drawImage(img, { x: buyer.x, y: buyer.y, width: buyer.width, height: buyer.height });
+  }
+  return doc.save();
+}
+const HL_COLOR = [1, 1, 0];
+const HL_RGB = HL_COLOR.join(" ");
+
 /** Did the plan change anything compared to the original page list? */
 export function planChanged(plan, pageCount) {
   return plan.length !== pageCount || plan.some((p, i) => p.index !== i || normAngle(p.rotate || 0) !== 0);

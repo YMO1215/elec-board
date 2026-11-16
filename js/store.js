@@ -14,7 +14,7 @@ const DEFAULT_PEOPLE = [
 ];
 
 export function initialState() {
-  return { version: 1, people: DEFAULT_PEOPLE.map((p) => ({ ...p })), tasks: [], contacts: [], categories: [], docs: [] };
+  return { version: 1, people: DEFAULT_PEOPLE.map((p) => ({ ...p })), tasks: [], contacts: [], categories: [], docs: [], docFolders: [] };
 }
 
 export function owners(state) {
@@ -234,21 +234,83 @@ function cleanDocName(name) {
   return String(name ?? "").trim().slice(0, 80) || "문서";
 }
 
-function docRow(d) {
-  return { id: d.id, url: d.url, at: d.at, name: cleanDocName(d.name), size: Math.max(0, Math.round(Number(d.size) || 0)) };
+/** `folder` is a 문서함 folder id, or "" (미분류) when it is missing or unknown. */
+function docRow(d, folderIds) {
+  return {
+    id: d.id, url: d.url, at: d.at, name: cleanDocName(d.name), size: Math.max(0, Math.round(Number(d.size) || 0)),
+    folder: typeof d.folder === "string" && folderIds.has(d.folder) ? d.folder : "",
+  };
 }
 
-/** Add an uploaded PDF. `id`, `at` and `name` are fixed by the caller so a retried op is identical. */
+const folderIdsOf = (state) => new Set((state.docFolders ?? []).map((f) => f.id));
+
+/** Add an uploaded PDF. `id`, `at`, `name` and `folder` are fixed by the caller so a retried op is identical. */
 export function addDoc(state, doc) {
   const docs = state.docs ?? [];
   if (!doc || typeof doc.id !== "string" || !DOC_HOST.test(doc.url ?? "") || docs.length >= MAX_DOCS || docs.some((d) => d.id === doc.id)) return state;
-  return { ...state, docs: [...docs, docRow(doc)] };
+  return { ...state, docs: [...docs, docRow(doc, folderIdsOf(state))] };
 }
 
 export function removeDoc(state, id) {
+  return removeDocs(state, [id]);
+}
+
+export function removeDocs(state, ids) {
+  const gone = new Set(ids);
   const docs = state.docs ?? [];
-  if (!docs.some((d) => d.id === id)) return state;
-  return { ...state, docs: docs.filter((d) => d.id !== id) };
+  if (!docs.some((d) => gone.has(d.id))) return state;
+  return { ...state, docs: docs.filter((d) => !gone.has(d.id)) };
+}
+
+export function renameDoc(state, id, name) {
+  const docs = state.docs ?? [];
+  const clean = String(name ?? "").trim().slice(0, 80);
+  if (!clean || !docs.some((d) => d.id === id && d.name !== clean)) return state;
+  return { ...state, docs: docs.map((d) => (d.id === id ? { ...d, name: clean } : d)) };
+}
+
+/** An edited PDF was uploaded as a new file: point the record at it (the caller deletes the old file afterwards). */
+export function replaceDocFile(state, id, { url, size }) {
+  const docs = state.docs ?? [];
+  if (!DOC_HOST.test(url ?? "") || !docs.some((d) => d.id === id)) return state;
+  return { ...state, docs: docs.map((d) => (d.id === id ? { ...d, url, size: Math.max(0, Math.round(Number(size) || 0)) } : d)) };
+}
+
+/** Move PDFs into a folder ("" = 미분류). */
+export function moveDocs(state, ids, folder) {
+  const target = folder && folderIdsOf(state).has(folder) ? folder : "";
+  const moving = new Set(ids);
+  const docs = state.docs ?? [];
+  if (!docs.some((d) => moving.has(d.id) && d.folder !== target)) return state;
+  return { ...state, docs: docs.map((d) => (moving.has(d.id) ? { ...d, folder: target } : d)) };
+}
+
+// 문서함 folders. Deleting a folder keeps its PDFs: they become 미분류 (same rule as 연락처 분류).
+export const MAX_DOC_FOLDERS = 50;
+const cleanFolderName = (name) => String(name ?? "").replace(/\s+/g, " ").trim().slice(0, 30);
+
+export function addDocFolder(state, { id, name }) {
+  const folders = state.docFolders ?? [];
+  const clean = cleanFolderName(name);
+  if (typeof id !== "string" || !id || !clean || folders.length >= MAX_DOC_FOLDERS || folders.some((f) => f.id === id || f.name === clean)) return state;
+  return { ...state, docFolders: [...folders, { id, name: clean }] };
+}
+
+export function renameDocFolder(state, id, name) {
+  const folders = state.docFolders ?? [];
+  const clean = cleanFolderName(name);
+  if (!clean || !folders.some((f) => f.id === id) || folders.some((f) => f.name === clean)) return state; // unchanged or taken
+  return { ...state, docFolders: folders.map((f) => (f.id === id ? { ...f, name: clean } : f)) };
+}
+
+export function removeDocFolder(state, id) {
+  const folders = state.docFolders ?? [];
+  if (!folders.some((f) => f.id === id)) return state;
+  return {
+    ...state,
+    docFolders: folders.filter((f) => f.id !== id),
+    docs: (state.docs ?? []).map((d) => (d.folder === id ? { ...d, folder: "" } : d)),
+  };
 }
 
 export const MAX_CONTACTS = 300;
@@ -403,12 +465,24 @@ function cleanPhotos(raw) {
     .slice(0, MAX_PHOTOS);
 }
 
-function cleanDocs(raw) {
+function cleanDocFolders(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const f of raw) {
+    const name = cleanFolderName(f?.name);
+    if (!f || typeof f.id !== "string" || !f.id || !name || out.some((o) => o.id === f.id || o.name === name)) continue;
+    out.push({ id: f.id, name });
+  }
+  return out.slice(0, MAX_DOC_FOLDERS);
+}
+
+function cleanDocs(raw, folders) {
   if (!Array.isArray(raw)) return [];
   const seen = new Set();
+  const folderIds = new Set(folders.map((f) => f.id));
   return raw
     .filter((d) => d && typeof d.id === "string" && typeof d.url === "string" && DOC_HOST.test(d.url) && typeof d.at === "string" && ISO_TIME.test(d.at) && !seen.has(d.id) && seen.add(d.id))
-    .map(docRow)
+    .map((d) => docRow(d, folderIds))
     .slice(0, MAX_DOCS);
 }
 
@@ -464,7 +538,8 @@ export function parse(raw) {
         deletedAt: typeof t.deletedAt === "string" && ISO_TIME.test(t.deletedAt) ? t.deletedAt : null,
       }));
     const categories = cleanCategories(data.categories);
-    return { version: 1, people, tasks, contacts: cleanContacts(data.contacts, categories), categories, docs: cleanDocs(data.docs) };
+    const docFolders = cleanDocFolders(data.docFolders);
+    return { version: 1, people, tasks, contacts: cleanContacts(data.contacts, categories), categories, docs: cleanDocs(data.docs, docFolders), docFolders };
   } catch {
     return initialState();
   }

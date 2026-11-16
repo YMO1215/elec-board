@@ -9,5 +9,8 @@
   "dependencies": {
     "@vercel/blob": "^2.8.0",
     "redis": "^4.7.0"
+  },
+  "devDependencies": {
+    "pdf-lib": "^1.17.1"
   }
 }

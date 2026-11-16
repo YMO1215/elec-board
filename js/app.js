@@ -9,9 +9,11 @@ import {
   activeOf, addComment, doneOf, emptyTrash, purgeTrash, removeComment, restoreFromTrash, restoreTask, save, setNote,
   DONE_FOLDER_DAYS, PHOTO_MONTHS, doneFolderCutoff, doneFolderDaysLeft, dropPhotos, expiredPhotos, photoCutoff, photoUrlsOf,
   TRASH_DAYS, removePhoto, trashCutoff, trashDaysLeft, trashOf, trashTask, updateTask,
-  MAX_DOCS, addDoc, removeDoc,
+  MAX_DOCS, MAX_DOC_FOLDERS, addDoc, addDocFolder, moveDocs, removeDocFolder, removeDocs, renameDoc, renameDocFolder, replaceDocFile,
 } from "./store.js";
-import { deleteDocFiles, docProblem, docSrc, fetchDoc, uploadDoc } from "./doc.js";
+import { MAX_DOC_BYTES, deleteDocFiles, docProblem, docSrc, fetchDoc, uploadDoc } from "./doc.js";
+import { editPdf, mergePdfs, normAngle, planChanged } from "./pdfops.js";
+import { loadPdfLib, thumbnails } from "./pdfkit.js";
 import { POLL_MS, createSync } from "./sync.js";
 import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
 import { makeZip } from "./zip.js";
@@ -563,9 +565,15 @@ function releasePhotoFiles(tasks) {
 }
 
 // ---------------------------------------------------------------- PDF 문서함 (next to 사진첩)
-// One board-wide list shared with the team. Tap a row to open the PDF in the browser's viewer.
+// One board-wide list shared with the team, sorted into folders (삭제한 폴더의 PDF 는 미분류로).
+// Tap a name to open it; 선택 picks several for 병합 · 이동 · 삭제; the pencil opens the page editor.
 
 let docsDialog = null;
+let docFolder = "all"; // all | none | <folder id>
+let docSelect = null; // null = normal list; [] = selecting (ids in the order they were picked = merge order)
+let folderPanel = false; // 폴더 관리 panel open
+let docsPending = false; // a refill was skipped while the user was typing in the dialog
+
 const docPicker = h("input", { type: "file", accept: "application/pdf,.pdf", multiple: true, hidden: true, "aria-hidden": "true", tabindex: "-1" });
 docPicker.addEventListener("change", () => {
   const files = [...docPicker.files];
@@ -574,17 +582,30 @@ docPicker.addEventListener("change", () => {
 });
 document.body.append(docPicker);
 
+const docFolders = () => state.docFolders ?? [];
+const docsAll = () => state.docs ?? [];
+const docOf = (id) => docsAll().find((d) => d.id === id);
+const folderName = (id) => docFolders().find((f) => f.id === id)?.name ?? "미분류";
+/** The folder new files go into: the one being viewed, else 미분류. */
+const currentFolderId = () => (docFolders().some((f) => f.id === docFolder) ? docFolder : "");
+
+async function uploadDocBlob(blob, name) {
+  if (blob.size > MAX_DOC_BYTES) throw new Error(`결과 파일이 ${formatBytes(blob.size)}라 4MB 를 넘어요`);
+  return uploadDoc(blob, { name, key: boardKey });
+}
+
 async function addDocs(files) {
   let added = 0;
+  const folder = currentFolderId();
   for (const file of files) {
-    if ((state.docs ?? []).length >= MAX_DOCS) { toast(`PDF 는 ${MAX_DOCS}개까지예요`); break; }
+    if (docsAll().length >= MAX_DOCS) { toast(`PDF 는 ${MAX_DOCS}개까지예요`); break; }
     const problem = docProblem(file);
     if (problem) { toast(`${file.name} — ${problem}`); continue; }
     toast(files.length > 1 ? `PDF 올리는 중… ${added + 1}/${files.length}` : "PDF 올리는 중…");
     try {
       const name = String(file.name ?? "").replace(/\.pdf$/i, "").trim() || "문서";
       const url = await uploadDoc(file, { name, key: boardKey });
-      const doc = { id: newId(), url, at: new Date().toISOString(), name, size: file.size }; // fixed outside the op so a retried op is identical
+      const doc = { id: newId(), url, at: new Date().toISOString(), name, size: file.size, folder }; // fixed outside the op so a retried op is identical
       commit((s) => addDoc(s, doc));
       added += 1;
     } catch (err) {
@@ -596,6 +617,10 @@ async function addDocs(files) {
   refreshUsage();
 }
 
+async function docBytes(doc) {
+  return new Uint8Array(await (await fetchDoc(doc.url, boardKey)).arrayBuffer());
+}
+
 async function downloadDoc(doc) {
   try {
     saveBlob(await fetchDoc(doc.url, boardKey), `${fileSafe(doc.name, "문서")}.pdf`);
@@ -604,43 +629,172 @@ async function downloadDoc(doc) {
   }
 }
 
+/** Delete PDFs: the files go first; the records stay if that fails. */
+async function deleteDocs(ids) {
+  const docs = ids.map(docOf).filter(Boolean);
+  if (!docs.length) return false;
+  try {
+    await deleteDocFiles(docs.map((d) => d.url), { key: boardKey });
+  } catch (err) {
+    toast(`PDF 를 지우지 못했어요 — ${err.message}`);
+    return false;
+  }
+  commit((s) => removeDocs(s, docs.map((d) => d.id)));
+  toast(docs.length > 1 ? `PDF ${docs.length}개를 지웠어요` : "PDF 를 지웠어요");
+  refreshUsage();
+  return true;
+}
+
+/** Merge the picked PDFs in the order they were picked; the originals stay. */
+async function mergeSelected() {
+  const docs = (docSelect ?? []).map(docOf).filter(Boolean);
+  if (docs.length < 2) { toast("병합할 PDF 를 2개 이상 고르세요"); return; }
+  if (docsAll().length >= MAX_DOCS) { toast(`PDF 는 ${MAX_DOCS}개까지예요`); return; }
+  toast(`PDF ${docs.length}개 병합하는 중…`);
+  try {
+    const [lib, ...files] = await Promise.all([loadPdfLib(), ...docs.map(docBytes)]);
+    const merged = new Blob([await mergePdfs(lib, files)], { type: "application/pdf" });
+    const name = `${docs[0].name} 외 ${docs.length - 1}개`.slice(0, 80);
+    const url = await uploadDocBlob(merged, name);
+    const folder = currentFolderId() || docs[0].folder;
+    const doc = { id: newId(), url, at: new Date().toISOString(), name, size: merged.size, folder };
+    commit((s) => addDoc(s, doc));
+    docSelect = null;
+    fillDocs();
+    toast(`“${name}” 로 합쳤어요`);
+    refreshUsage();
+  } catch (err) {
+    toast(`병합하지 못했어요 — ${err.message}`);
+  }
+}
+
+function toggleSelect(id) {
+  const i = docSelect.indexOf(id);
+  if (i >= 0) docSelect.splice(i, 1); else docSelect.push(id);
+  fillDocs();
+}
+
 function docRowEl(doc) {
   const d = new Date(doc.at);
   const when = `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`;
+  const sub = [when, doc.size ? formatBytes(doc.size) : "", docFolder === "all" && doc.folder ? folderName(doc.folder) : ""].filter(Boolean).join(" · ");
+  const main = [
+    h("span", { class: "doc-icon", "aria-hidden": "true" }, icon("doc", 20)),
+    h("span", { class: "doc-main" }, h("span", { class: "doc-name" }, doc.name), h("span", { class: "doc-sub" }, sub)),
+  ];
+  if (docSelect) {
+    const order = docSelect.indexOf(doc.id);
+    return h("li", { class: `doc-row${order >= 0 ? " is-picked" : ""}`, dataset: { id: doc.id } },
+      h("button", { class: "doc-open", type: "button", "aria-pressed": order >= 0 ? "true" : "false", "aria-label": `“${doc.name}” ${order >= 0 ? `선택됨 ${order + 1}번째` : "선택"}`, onClick: () => toggleSelect(doc.id) },
+        h("span", { class: "doc-check", "aria-hidden": "true" }, order >= 0 ? String(order + 1) : ""), main));
+  }
   return h("li", { class: "doc-row", dataset: { id: doc.id } },
-    h("a", { class: "doc-open", href: docSrc(doc.url, doc.name, boardKey), target: "_blank", rel: "noopener", "aria-label": `“${doc.name}” 열기` },
-      h("span", { class: "doc-icon", "aria-hidden": "true" }, icon("doc", 20)),
-      h("span", { class: "doc-main" },
-        h("span", { class: "doc-name" }, doc.name),
-        h("span", { class: "doc-sub" }, doc.size ? `${when} · ${formatBytes(doc.size)}` : when))),
+    h("a", { class: "doc-open", href: docSrc(doc.url, doc.name, boardKey), target: "_blank", rel: "noopener", "aria-label": `“${doc.name}” 열기` }, main),
+    h("button", { class: "icon-btn", type: "button", "aria-label": `“${doc.name}” 편집`, onClick: () => openDocEditor(doc.id) }, icon("edit")),
     h("button", { class: "icon-btn", type: "button", "aria-label": `“${doc.name}” 내려받기`, onClick: () => downloadDoc(doc) }, icon("download")),
-    armed(h("button", { class: "icon-btn is-delete", type: "button", "aria-label": `“${doc.name}” 삭제` }, icon("trash")), "삭제", async () => {
-      try {
-        await deleteDocFiles([doc.url], { key: boardKey }); // the file goes first; the record stays if this fails
-      } catch (err) {
-        toast(`PDF 를 지우지 못했어요 — ${err.message}`);
-        return;
-      }
-      commit((s) => removeDoc(s, doc.id));
-      toast("PDF 를 지웠어요");
-      refreshUsage();
-    }));
+    armed(h("button", { class: "icon-btn is-delete", type: "button", "aria-label": `“${doc.name}” 삭제` }, icon("trash")), "삭제", () => deleteDocs([doc.id])));
 }
 
-function fillDocs() {
+/** 폴더 관리: rename / delete each folder, add a new one. Deleting a folder keeps its PDFs (they become 미분류). */
+function folderPanelEl() {
+  const rows = docFolders().map((f) => {
+    const input = h("input", { class: "contact-input", type: "text", value: f.name, maxlength: 30, "aria-label": `${f.name} 폴더 이름` });
+    input.addEventListener("change", () => {
+      if (!input.value.trim()) { input.value = f.name; return; }
+      if (docFolders().some((o) => o.id !== f.id && o.name === input.value.trim())) { toast("같은 이름의 폴더가 있어요"); input.value = f.name; return; }
+      commit((s) => renameDocFolder(s, f.id, input.value));
+    });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); input.blur(); } });
+    const n = docsAll().filter((d) => d.folder === f.id).length;
+    return h("div", { class: "cat-row" }, input,
+      armed(h("button", { class: "text-btn danger", type: "button", "aria-label": `${f.name} 폴더 삭제${n ? ` (PDF ${n}개는 미분류로)` : ""}` }, "삭제"), "정말 삭제",
+        () => { if (docFolder === f.id) docFolder = "all"; commit((s) => removeDocFolder(s, f.id)); fillDocs(); }));
+  });
+  const fresh = h("input", { class: "contact-input cat-new", type: "text", maxlength: 30, placeholder: "새 폴더 이름 (예: 점검표)", "aria-label": "새 폴더 이름" });
+  const add = () => {
+    const name = fresh.value.trim();
+    if (!name) { fresh.focus(); return; }
+    if (docFolders().some((f) => f.name === name)) { toast("같은 이름의 폴더가 있어요"); fresh.focus(); return; }
+    if (docFolders().length >= MAX_DOC_FOLDERS) { toast(`폴더는 ${MAX_DOC_FOLDERS}개까지예요`); return; }
+    const id = newId(); // fixed outside the op so a retried op is identical
+    commit((s) => addDocFolder(s, { id, name }));
+    fresh.value = "";
+    fillDocs(true);
+    docsDialog?.querySelector(".cat-new")?.focus();
+  };
+  fresh.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+  return h("div", { class: "cat-panel doc-folder-panel" }, rows,
+    h("div", { class: "cat-row" }, fresh, h("button", { class: "text-btn", type: "button", onClick: add }, "추가")),
+    h("p", { class: "album-note" }, "폴더를 지워도 안의 PDF 는 지워지지 않고 미분류로 옮겨져요."),
+    h("div", { class: "cat-row" }, h("span", { class: "spacer" }),
+      h("button", { class: "text-btn", type: "button", onClick: () => { folderPanel = false; fillDocs(true); } }, "완료")));
+}
+
+function folderChips() {
+  const folders = docFolders();
+  const count = (pred) => docsAll().filter(pred).length;
+  const chip = (id, label, n) => h("button", {
+    class: "chip sm", type: "button", "aria-pressed": docFolder === id ? "true" : "false",
+    onClick: () => { docFolder = id; fillDocs(true); },
+  }, label, h("span", { class: "n" }, String(n)));
+  return h("div", { class: "contact-bar doc-folders", role: "group", "aria-label": "폴더" },
+    chip("all", "전체", docsAll().length),
+    folders.length ? chip("none", "미분류", count((d) => !d.folder)) : null,
+    folders.map((f) => chip(f.id, f.name, count((d) => d.folder === f.id))),
+    h("button", { class: "chip sm chip-edit", type: "button", "aria-expanded": folderPanel ? "true" : "false", onClick: () => { folderPanel = !folderPanel; fillDocs(true); } },
+      icon("folder", 14), " 폴더 관리"));
+}
+
+function selectBar() {
+  const n = docSelect.length;
+  const move = h("select", { class: "doc-move", "aria-label": "고른 PDF 를 옮길 폴더", disabled: n ? null : true },
+    h("option", { value: "", disabled: true, selected: true }, "폴더로 이동"),
+    h("option", { value: "-" }, "미분류"),
+    docFolders().map((f) => h("option", { value: f.id }, f.name)));
+  move.addEventListener("change", () => {
+    const target = move.value === "-" ? "" : move.value;
+    const ids = [...docSelect];
+    commit((s) => moveDocs(s, ids, target));
+    docSelect = null;
+    fillDocs(true);
+    toast(`PDF ${ids.length}개를 “${target ? folderName(target) : "미분류"}” 로 옮겼어요`);
+  });
+  return h("div", { class: "doc-selbar" },
+    h("span", { class: "doc-selcount" }, n ? `${n}개 선택` : "PDF 를 고르세요"),
+    h("button", { class: "text-btn", type: "button", disabled: n < 2 ? true : null, onClick: mergeSelected }, "병합"),
+    move,
+    n ? armed(h("button", { class: "text-btn danger", type: "button" }, "삭제"), `${n}개 삭제`, async () => {
+      if (await deleteDocs([...docSelect])) { docSelect = null; fillDocs(true); }
+    }) : h("button", { class: "text-btn danger", type: "button", disabled: true }, "삭제"),
+    h("button", { class: "text-btn quiet", type: "button", onClick: () => { docSelect = null; fillDocs(true); } }, "취소"));
+}
+
+function fillDocs(force = false) {
   if (!docsDialog) return;
+  const typing = docsDialog.contains(document.activeElement) && document.activeElement.matches("input, select");
+  if (typing && !force) { docsPending = true; return; } // don't wipe what is being typed; refill on focusout
+  docsPending = false;
+  if (docFolder !== "all" && docFolder !== "none" && !docFolders().some((f) => f.id === docFolder)) docFolder = "all"; // that folder is gone
+  if (docSelect) docSelect = docSelect.filter((id) => docOf(id)); // drop PDFs someone else deleted
   const scroll = docsDialog.scrollTop;
-  const docs = [...(state.docs ?? [])].sort((a, b) => (a.at < b.at ? 1 : -1)); // newest first
+  const docs = docsAll()
+    .filter((d) => docFolder === "all" || (docFolder === "none" ? !d.folder : d.folder === docFolder))
+    .sort((a, b) => (a.at < b.at ? 1 : -1)); // newest first
   docsDialog.replaceChildren(h("div", { class: "album-inner" },
     h("header", { class: "album-head" },
       h("h2", { class: "cal-title" }, "PDF"),
       h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: () => animateClose(docsDialog) }, icon("x"))),
-    h("div", { class: "folder-actions" },
-      h("button", { class: "text-btn", type: "button", "aria-label": "PDF 파일 올리기", onClick: () => docPicker.click() }, icon("plus", 16), "PDF 올리기")),
-    h("p", { class: "album-note" }, "파일마다 4MB 까지 올릴 수 있어요. 팀 모두에게 보여요. 이름을 누르면 열려요."),
+    folderChips(),
+    folderPanel ? folderPanelEl() : null,
+    docSelect ? selectBar() : h("div", { class: "folder-actions" },
+      h("button", { class: "text-btn", type: "button", "aria-label": `PDF 파일 올리기${currentFolderId() ? ` (${folderName(currentFolderId())} 폴더)` : ""}`, onClick: () => docPicker.click() }, icon("plus", 16), "PDF 올리기"),
+      docsAll().length ? h("button", { class: "text-btn", type: "button", onClick: () => { docSelect = []; fillDocs(true); } }, icon("check", 16), "선택 (병합·이동·삭제)") : null),
+    h("p", { class: "album-note" }, docSelect
+      ? "고른 순서대로 병합돼요. 원본은 그대로 남아요."
+      : "파일마다 4MB 까지, 팀 모두에게 보여요. 이름을 누르면 열리고, 연필로 페이지를 편집해요."),
     docs.length
       ? h("ul", { class: "doc-list", role: "list" }, docs.map(docRowEl))
-      : h("p", { class: "folder-empty" }, "아직 올린 PDF 가 없어요")));
+      : h("p", { class: "folder-empty" }, docsAll().length ? "이 폴더에는 PDF 가 없어요" : "아직 올린 PDF 가 없어요")));
   docsDialog.scrollTop = scroll;
 }
 
@@ -649,10 +803,133 @@ function openDocs() {
   const dialog = h("dialog", { class: "cal album docs", "aria-label": "PDF" });
   docsDialog = dialog;
   wireDialog(dialog);
-  dialog.addEventListener("close", () => { docsDialog = null; dialog.remove(); });
+  dialog.addEventListener("close", () => { docsDialog = null; docSelect = null; folderPanel = false; dialog.remove(); });
+  dialog.addEventListener("focusout", () => setTimeout(() => { if (docsPending) fillDocs(); }, 250));
   document.body.append(dialog);
-  fillDocs();
+  fillDocs(true);
   dialog.showModal();
+}
+
+// ---------------------------------------------------------------- PDF page editor
+// Reorder, rotate and delete pages, rename. Saving uploads a new file, points the record at it, then deletes the old file.
+
+function openDocEditor(id) {
+  const doc = docOf(id);
+  if (!doc) return;
+  let plan = []; // [{ index, rotate }] in the new order
+  let count = 0;
+  const thumbs = [];
+  let cancelThumbs = () => {};
+  let bytes = null;
+  let saving = false;
+
+  const dialog = h("dialog", { class: "cal album doc-editor", "aria-label": `“${doc.name}” 편집` });
+  const close = () => animateClose(dialog);
+  const nameInput = h("input", { class: "contact-input doc-name-input", type: "text", value: doc.name, maxlength: 80, "aria-label": "PDF 이름" });
+  const grid = h("ol", { class: "page-grid", role: "list" });
+  const info = h("p", { class: "album-note" }, "불러오는 중…");
+  const saveBtn = h("button", { class: "text-btn doc-save", type: "button", disabled: true }, "저장");
+
+  const move = (i, by) => {
+    const j = i + by;
+    if (j < 0 || j >= plan.length) return;
+    [plan[i], plan[j]] = [plan[j], plan[i]];
+    drawGrid(j, by < 0 ? "left" : "right");
+  };
+  const rotate = (i) => { plan[i] = { ...plan[i], rotate: normAngle(plan[i].rotate + 90) }; drawGrid(i, "rotate"); };
+  const remove = (i) => {
+    if (plan.length === 1) { toast("페이지가 하나는 남아 있어야 해요"); return; }
+    plan.splice(i, 1);
+    drawGrid(Math.min(i, plan.length - 1), "delete");
+  };
+
+  function drawGrid(focusAt = null, focusWhat = null) {
+    grid.replaceChildren(...plan.map((p, i) => h("li", { class: "page-card" },
+      h("div", { class: "page-thumb" },
+        thumbs[p.index]
+          ? h("img", { src: thumbs[p.index], alt: "", style: `transform: rotate(${p.rotate}deg)` })
+          : h("span", { class: "page-wait" }, `${p.index + 1}`)),
+      h("p", { class: "page-label" }, `${i + 1}쪽`, p.index !== i ? h("span", {}, ` (원래 ${p.index + 1})`) : null),
+      h("div", { class: "page-tools" },
+        h("button", { class: "icon-btn", type: "button", dataset: { act: "left" }, disabled: i === 0 ? true : null, "aria-label": `${i + 1}쪽 앞으로`, onClick: () => move(i, -1) }, icon("chevron-left")),
+        h("button", { class: "icon-btn", type: "button", dataset: { act: "rotate" }, "aria-label": `${i + 1}쪽 오른쪽으로 돌리기`, onClick: () => rotate(i) }, icon("rotate")),
+        h("button", { class: "icon-btn is-delete", type: "button", dataset: { act: "delete" }, "aria-label": `${i + 1}쪽 삭제`, onClick: () => remove(i) }, icon("x")),
+        h("button", { class: "icon-btn", type: "button", dataset: { act: "right" }, disabled: i === plan.length - 1 ? true : null, "aria-label": `${i + 1}쪽 뒤로`, onClick: () => move(i, 1) }, icon("chevron-right"))))));
+    const changed = count && planChanged(plan, count);
+    info.textContent = count ? `${plan.length}쪽${changed ? ` · 원래 ${count}쪽에서 바뀜` : ""}` : info.textContent;
+    if (focusAt !== null) {
+      const card = grid.children[focusAt];
+      (card?.querySelector(`[data-act="${focusWhat}"]:not([disabled])`) ?? card?.querySelector("button:not([disabled])"))?.focus();
+    }
+  }
+
+  const reset = h("button", { class: "text-btn quiet", type: "button", onClick: () => { plan = Array.from({ length: count }, (_, i) => ({ index: i, rotate: 0 })); drawGrid(); } }, icon("restore", 16), "원래대로");
+
+  saveBtn.addEventListener("click", async () => {
+    if (saving) return;
+    const name = nameInput.value.trim() || doc.name;
+    const pagesChanged = count && planChanged(plan, count);
+    if (!pagesChanged && name === doc.name) { close(); return; }
+    saving = true;
+    saveBtn.disabled = true;
+    try {
+      if (pagesChanged) {
+        toast("PDF 저장하는 중…");
+        const lib = await loadPdfLib();
+        const out = new Blob([await editPdf(lib, bytes, plan)], { type: "application/pdf" });
+        const url = await uploadDocBlob(out, name);
+        const oldUrl = docOf(id)?.url;
+        commit((s) => replaceDocFile(renameDoc(s, id, name), id, { url, size: out.size }));
+        if (!docOf(id)) { deleteDocFiles([url], { key: boardKey }).catch(() => {}); throw new Error("그 사이에 누군가 이 PDF 를 지웠어요"); }
+        if (oldUrl && oldUrl !== url) deleteDocFiles([oldUrl], { key: boardKey }).catch(() => {}); // best effort: the record already points at the new file
+        refreshUsage();
+      } else {
+        commit((s) => renameDoc(s, id, name));
+      }
+      toast("PDF 를 저장했어요");
+      close();
+    } catch (err) {
+      toast(`저장하지 못했어요 — ${err.message}`);
+      saving = false;
+      saveBtn.disabled = false;
+    }
+  });
+  nameInput.addEventListener("input", () => { if (bytes) saveBtn.disabled = false; });
+  nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameInput.blur(); } });
+
+  dialog.append(h("div", { class: "album-inner" },
+    h("header", { class: "album-head" },
+      h("h2", { class: "cal-title" }, "PDF 편집"),
+      h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: close }, icon("x"))),
+    nameInput,
+    h("div", { class: "folder-actions" }, info, h("span", { class: "spacer" }), reset, saveBtn),
+    h("p", { class: "album-note" }, "화살표로 순서를 바꾸고, 돌리기·삭제 후 저장하세요. 저장하면 원본 파일이 바뀐 파일로 교체돼요."),
+    grid));
+  wireDialog(dialog);
+  dialog.addEventListener("close", () => { cancelThumbs(); dialog.remove(); });
+  document.body.append(dialog);
+  dialog.showModal();
+
+  (async () => {
+    try {
+      bytes = await docBytes(doc);
+      loadPdfLib().catch(() => {}); // warm up for the save
+      const shot = await thumbnails(bytes, {
+        onPage: (i, url) => {
+          thumbs[i] = url;
+          const img = [...grid.children].map((li, at) => ({ li, p: plan[at] })).find(({ p }) => p?.index === i);
+          if (img) { const box = img.li.querySelector(".page-thumb"); box.replaceChildren(h("img", { src: url, alt: "", style: `transform: rotate(${img.p.rotate}deg)` })); }
+        },
+      });
+      cancelThumbs = shot.cancel;
+      count = shot.count;
+      plan = Array.from({ length: count }, (_, i) => ({ index: i, rotate: 0 }));
+      saveBtn.disabled = false;
+      drawGrid();
+    } catch (err) {
+      info.textContent = `열지 못했어요 — ${err.message}`;
+    }
+  })();
 }
 
 /** A card that just landed somewhere (drag, sheet, keyboard) gets a short ring so the eye can find it. */

@@ -49,8 +49,42 @@
   --gap: clamp(12px, 1.6vw, 20px); /* space between cards */
 }
 
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+/* Dark tokens: manual choice (data-theme=dark) and the OS preference when nothing is chosen.
+   Same values in both places — keep them identical. */
+:root[data-theme="dark"] {
+  --label: #f5f5f7;
+  --secondary-label: #aeaeb2;
+  --tertiary-label: #8e8e93;
+  --system-background: #000000;
+  --secondary-background: #1c1c1e;
+  --fill: rgba(120, 120, 128, 0.24);
+  --fill-strong: rgba(120, 120, 128, 0.36);
+  --separator: rgba(84, 84, 88, 0.65);
+  --tint: #0a84ff;
+  --success: #30d158;
+  --warning: #ff9f0a;
+  --destructive: #ff453a;
+  --ring: rgba(10, 132, 255, 0.55);
+  --seg-selected: #636366;
+  --p1: #ff453a;
+  --p2: #0a84ff;
+  --p3: #30d158;
+  --p4: #ff9f0a;
+  --pc: #5e5ce6;
+  --pr: #40c8e0;
+  --glass: rgba(28, 28, 30, 0.72);
+  --glass-highlight: rgba(255, 255, 255, 0.14);
+  --hud: rgba(58, 58, 60, 0.86);
+  --scrim: rgba(0, 0, 0, 0.55);
+  --shadow-lift: 0 16px 40px rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 10px 32px rgba(0, 0, 0, 0.38);
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --label: #f5f5f7;
     --secondary-label: #aeaeb2;
     --tertiary-label: #8e8e93;
@@ -240,6 +274,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 /* Space above and below the date equals the space between cards. */
 .hero { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: var(--gap); }
 .hero-tools { display: flex; flex: none; align-items: center; gap: 8px; } /* PDF + 사진첩 side by side on the right */
+.hero .album-btn.theme-btn { width: 36px; padding: 0; justify-content: center; } /* icon only; aria-label keeps the name */
 @media (max-width: 380px) { .hero .album-btn > span { display: none; } .hero .album-btn { padding: 0 9px; } } /* very narrow phones: icons only (aria-label keeps the name) */
 .hero .album-btn { display: inline-flex; flex: none; align-items: center; gap: 6px; width: auto; height: 36px; padding: 0 12px; font-size: 15px; line-height: 20px; font-weight: 600; white-space: nowrap; }
 .date-btn {

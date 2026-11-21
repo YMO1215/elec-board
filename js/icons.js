@@ -30,6 +30,9 @@ const PATHS = {
   "zoom-in": "M10.5 4.5a6 6 0 1 1 0 12 6 6 0 0 1 0-12zM15 15l4.5 4.5M8 10.5h5M10.5 8v5",
   // clockwise arrow: rotate a PDF page 90°
   rotate: "M19 12a7 7 0 1 1-2.1-5M19 4.5V9h-4.5",
+  // sun / crescent: light-dark theme toggle
+  sun: "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4",
+  moon: "M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z",
 };
 
 /** Returns a new decorative <svg>. Give the button that holds it an aria-label. */

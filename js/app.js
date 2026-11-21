@@ -2,6 +2,7 @@
 import { h } from "./dom.js";
 import { initialOf } from "./avatar.js";
 import { icon } from "./icons.js";
+import { initThemeToggle } from "./theme.js";
 import { openCalendar } from "./calendar.js";
 import { EASE, animateClose, reduced, replay, toggleHeight, wireDialog } from "./motion.js";
 import {
@@ -2290,6 +2291,7 @@ function stamp() {
 document.getElementById("stamp").addEventListener("click", () => openCalendar({ people: state.people, today: todayIso() }));
 document.getElementById("albumBtn").prepend(icon("album", 18));
 document.getElementById("albumBtn").addEventListener("click", () => openAlbum());
+initThemeToggle(document.getElementById("themeBtn"));
 document.getElementById("docBtn").prepend(icon("doc", 18));
 document.getElementById("docBtn").addEventListener("click", () => openDocs());
 

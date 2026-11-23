@@ -33,6 +33,10 @@ const PATHS = {
   // sun / crescent: light-dark theme toggle
   sun: "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4",
   moon: "M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z",
+  // three dots: more actions of a row
+  more: "M6 12h.01M12 12h.01M18 12h.01",
+  // two lines joining into one: merge PDFs
+  merge: "M6 4.5v3a4.5 4.5 0 0 0 4.5 4.5h3A4.5 4.5 0 0 1 18 16.5v3M18 4.5v3a4.5 4.5 0 0 1-4.5 4.5M9 17l-3 3-3-3",
 };
 
 /** Returns a new decorative <svg>. Give the button that holds it an aria-label. */

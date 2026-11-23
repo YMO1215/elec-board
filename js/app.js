@@ -18,6 +18,7 @@ import { drawStampPreview, loadPdfLib, pageTexts, pdfViewer, textMeasurer, textP
 import { BUYER, buyerSpot, buyerText, highlightBox, receiptFields, receiptMarks } from "./receipt.js";
 import { csvName, receiptCsv } from "./receiptcsv.js";
 import { auditReceipts } from "./receiptaudit.js";
+import { SORTS, selectableIds, toggleAll, viewDocs } from "./docview.js";
 import { POLL_MS, createSync } from "./sync.js";
 import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
 import { makeZip } from "./zip.js";
@@ -595,6 +596,10 @@ let docFolder = "all"; // all | none | <folder id>
 let docSelect = null; // null = normal list; [] = selecting (ids in the order they were picked = merge order)
 let folderPanel = false; // 폴더 관리 panel open
 let docsPending = false; // a refill was skipped while the user was typing in the dialog
+let docQuery = ""; // the search box
+const DOC_SORT_KEY = "docs-sort";
+let docSort = "new"; // key of SORTS, remembered in storage (read when the sheet opens)
+let docView = []; // the PDFs on screen in order — what 전체 선택 picks from
 
 const docPicker = h("input", { type: "file", accept: "application/pdf,.pdf", multiple: true, hidden: true, "aria-hidden": "true", tabindex: "-1" });
 docPicker.addEventListener("change", () => {
@@ -712,11 +717,8 @@ function docRowEl(doc) {
   }
   return h("li", { class: `doc-row${doc.parent ? " is-child" : ""}`, dataset: { id: doc.id } },
     h("a", { class: "doc-open", href: docSrc(doc.url, doc.name, boardKey), target: "_blank", rel: "noopener", "aria-label": `“${doc.name}” 열기` }, main),
-    doc.parent ? null : h("button", { class: "icon-btn", type: "button", title: "구매자 표시본 만들기", "aria-label": `“${doc.name}” 구매자 이름 + 형광 표시본 만들기`, onClick: () => openBuyerDialog(doc.id) }, icon("marker")),
-    doc.parent ? null : h("button", { class: "icon-btn", type: "button", title: "영수증 정리 CSV 받기", "aria-label": `“${doc.name}” 영수증 정리 CSV 내려받기`, onClick: () => exportReceiptCsv([doc.id]) }, icon("table")),
-    h("button", { class: "icon-btn", type: "button", "aria-label": `“${doc.name}” 편집`, onClick: () => openDocEditor(doc.id) }, icon("edit")),
-    h("button", { class: "icon-btn", type: "button", "aria-label": `“${doc.name}” 내려받기`, onClick: () => downloadDoc(doc) }, icon("download")),
-    armed(h("button", { class: "icon-btn is-delete", type: "button", "aria-label": `“${doc.name}” 삭제` }, icon("trash")), "삭제", () => deleteDocs([doc.id])));
+    h("button", { class: "icon-btn", type: "button", title: "페이지 편집", "aria-label": `“${doc.name}” 편집`, onClick: () => openDocEditor(doc.id) }, icon("edit")),
+    h("button", { class: "icon-btn doc-more", type: "button", title: "더보기", "aria-haspopup": "dialog", "aria-label": `“${doc.name}” 더보기 (표시본·CSV·검산·이동·내려받기·삭제)`, onClick: () => openDocMenu(doc.id) }, icon("more")));
 }
 
 /** 폴더 관리: rename / delete each folder, add a new one. Deleting a folder keeps its PDFs (they become 미분류). */
@@ -758,41 +760,123 @@ function folderChips() {
   const folders = docFolders();
   const count = (pred) => docsAll().filter(pred).length;
   const chip = (id, label, n) => h("button", {
-    class: "chip sm", type: "button", "aria-pressed": docFolder === id ? "true" : "false",
-    onClick: () => { docFolder = id; fillDocs(true); },
-  }, label, h("span", { class: "n" }, String(n)));
-  return h("div", { class: "contact-bar doc-folders", role: "group", "aria-label": "폴더" },
+    class: "chip sm", type: "button", title: label, "aria-pressed": docFolder === id ? "true" : "false",
+    onClick: () => { docFolder = id; fillDocs(true); revealFolderChip(); },
+  }, h("span", { class: "chip-name" }, label), h("span", { class: "n" }, String(n)));
+  return h("div", { class: "doc-folders", role: "group", "aria-label": "폴더" },
     chip("all", "전체", docsAll().length),
     folders.length ? chip("none", "미분류", count((d) => !d.folder)) : null,
-    folders.map((f) => chip(f.id, f.name, count((d) => d.folder === f.id))),
-    h("button", { class: "chip sm chip-edit", type: "button", "aria-expanded": folderPanel ? "true" : "false", onClick: () => { folderPanel = !folderPanel; fillDocs(true); } },
-      icon("folder", 14), " 폴더 관리"));
+    folders.map((f) => chip(f.id, f.name, count((d) => d.folder === f.id))));
 }
 
-function selectBar() {
+/** Phones show the folders as one scrolling line: bring the chosen one into view. */
+function revealFolderChip() {
+  docsDialog?.querySelector('.doc-folders [aria-pressed="true"]')?.scrollIntoView({ inline: "center", block: "nearest" });
+}
+
+/** 전체 선택 / 전체 해제 over the originals on screen (copies made from them are left out). */
+function toggleSelectAll() {
+  docSelect = toggleAll(docSelect, selectableIds(docView));
+  fillDocs(true);
+}
+
+function selectTop() {
   const n = docSelect.length;
-  const move = h("select", { class: "doc-move", "aria-label": "고른 PDF 를 옮길 폴더", disabled: n ? null : true },
-    h("option", { value: "", disabled: true, selected: true }, "폴더로 이동"),
-    h("option", { value: "-" }, "미분류"),
-    docFolders().map((f) => h("option", { value: f.id }, f.name)));
-  move.addEventListener("change", () => {
-    const target = move.value === "-" ? "" : move.value;
-    const ids = [...docSelect];
-    commit((s) => moveDocs(s, ids, target));
-    docSelect = null;
-    fillDocs(true);
-    toast(`PDF ${ids.length}개를 “${target ? folderName(target) : "미분류"}” 로 옮겼어요`);
-  });
-  return h("div", { class: "doc-selbar" },
+  const ids = selectableIds(docView);
+  const allOn = ids.length > 0 && ids.every((id) => docSelect.includes(id));
+  return h("div", { class: "doc-seltop" },
     h("span", { class: "doc-selcount" }, n ? `${n}개 선택` : "PDF 를 고르세요"),
-    h("button", { class: "text-btn", type: "button", disabled: n < 2 ? true : null, onClick: mergeSelected }, "병합"),
-    h("button", { class: "text-btn", type: "button", disabled: n ? null : true, title: "고른 영수증 PDF 를 한 CSV 로 정리", onClick: () => exportReceiptCsv([...docSelect]) }, "CSV"),
-    h("button", { class: "text-btn", type: "button", disabled: n ? null : true, title: "고른 영수증의 품목·금액이 맞는지 검산", onClick: () => openAuditDialog([...docSelect]) }, "검산"),
-    move,
-    n ? armed(h("button", { class: "text-btn danger", type: "button" }, "삭제"), `${n}개 삭제`, async () => {
-      if (await deleteDocs([...docSelect])) { docSelect = null; fillDocs(true); }
-    }) : h("button", { class: "text-btn danger", type: "button", disabled: true }, "삭제"),
+    h("button", { class: "text-btn", type: "button", disabled: ids.length ? null : true, title: "화면에 보이는 PDF 전체 (구매자 표시본은 제외)", onClick: toggleSelectAll }, allOn ? "전체 해제" : "전체 선택"),
     h("button", { class: "text-btn quiet", type: "button", onClick: () => { docSelect = null; fillDocs(true); } }, "취소"));
+}
+
+/** Actions on the picked PDFs, pinned to the bottom of the sheet: icon + short word, no box around them. */
+function selectFoot() {
+  const n = docSelect.length;
+  const act = (label, name, props = {}) => h("button", { class: "doc-act", type: "button", ...props }, icon(name, 18), h("span", {}, label));
+  return h("div", { class: "doc-selfoot" },
+    act("병합", "merge", { disabled: n < 2 ? true : null, title: n < 2 ? "2개 이상 고르세요" : "고른 순서대로 한 PDF 로 합치기", onClick: mergeSelected }),
+    act("검산", "check", { disabled: n ? null : true, title: "고른 영수증의 품목·금액이 맞는지 검산", onClick: () => openAuditDialog([...docSelect]) }),
+    act("CSV", "table", { disabled: n ? null : true, title: "고른 영수증 PDF 를 한 CSV 로 정리", onClick: () => exportReceiptCsv([...docSelect]) }),
+    act("이동", "move", { disabled: n ? null : true, title: "폴더로 이동", onClick: () => openDocFolderSheet([...docSelect]) }),
+    n ? armed(h("button", { class: "doc-act is-danger text-btn", type: "button" }, icon("trash", 18)), `${n}개 삭제`, async () => {
+      if (await deleteDocs([...docSelect])) { docSelect = null; fillDocs(true); }
+    }) : h("button", { class: "doc-act is-danger", type: "button", disabled: true }, icon("trash", 18), h("span", {}, "삭제")));
+}
+
+/** Choose a folder for the given PDFs (a copy that moves alone leaves its original; see store.moveDocs). */
+function openDocFolderSheet(ids) {
+  const docs = ids.map(docOf).filter(Boolean);
+  if (!docs.length) return;
+  const here = docs.every((d) => d.folder === docs[0].folder) ? docs[0].folder : null;
+  const targets = [{ id: "", name: "미분류" }, ...docFolders()];
+  const dialog = h("dialog", { class: "sheet", "aria-label": "폴더로 이동" });
+  const close = () => animateClose(dialog);
+  dialog.append(h("div", { class: "sheet-inner" },
+    h("header", { class: "sheet-head" },
+      h("div", {}, h("h2", {}, "폴더로 이동"), h("p", {}, docs.length > 1 ? `PDF ${docs.length}개` : docs[0].name)),
+      h("button", { class: "icon-btn sheet-close", type: "button", "aria-label": "닫기", onClick: close }, icon("x"))),
+    h("div", { class: "sheet-list" }, targets.map((t) => h("button", {
+      class: "sheet-row", type: "button", disabled: here === t.id ? true : null,
+      "aria-label": here === t.id ? `${t.name} (현재 폴더)` : `${t.name} 폴더로 옮기기`,
+      onClick: () => {
+        close();
+        commit((s) => moveDocs(s, ids, t.id));
+        docSelect = null;
+        fillDocs(true);
+        toast(`PDF ${docs.length}개를 “${t.name}” 로 옮겼어요`);
+      },
+    }, icon("folder", 20), h("span", { class: "row-name" }, t.name), here === t.id ? icon("check") : null)))));
+  wireDialog(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+/** The ⋯ of a row: everything except open and edit, each with its name written out. */
+function openDocMenu(id) {
+  const doc = docOf(id);
+  if (!doc) return;
+  const dialog = h("dialog", { class: "sheet", "aria-label": `“${doc.name}” 작업` });
+  const close = () => animateClose(dialog);
+  const item = (name, label, run) => h("button", { class: "sheet-row", type: "button", onClick: () => { close(); run(); } },
+    icon(name, 20), h("span", { class: "row-name" }, label));
+  dialog.append(h("div", { class: "sheet-inner" },
+    h("header", { class: "sheet-head" },
+      h("div", {}, h("h2", {}, "PDF 작업"), h("p", {}, doc.name)),
+      h("button", { class: "icon-btn sheet-close", type: "button", "aria-label": "닫기", onClick: close }, icon("x"))),
+    h("div", { class: "sheet-list" },
+      doc.parent ? null : item("marker", "구매자 표시본 만들기", () => openBuyerDialog(doc.id)),
+      doc.parent ? null : item("table", "영수증 정리 CSV 받기", () => exportReceiptCsv([doc.id])),
+      doc.parent ? null : item("check", "영수증 검산", () => openAuditDialog([doc.id])),
+      item("folder", "폴더로 이동", () => openDocFolderSheet([doc.id])),
+      item("download", "내려받기", () => downloadDoc(doc)),
+      armed(h("button", { class: "sheet-row is-danger text-btn", type: "button" }, icon("trash", 20), "삭제"), "한 번 더 누르면 삭제",
+        async () => { close(); await deleteDocs([doc.id]); }))));
+  wireDialog(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+/** The list part of the sheet (notes, folder panel, rows). Search typing only repaints this, never the input itself (IME). */
+function paintDocList() {
+  const box = docsDialog?.querySelector(".doc-scroll");
+  if (!box) return;
+  docView = viewDocs(docsAll(), { folder: docFolder, query: docQuery, sort: docSort });
+  const upload = h("button", { class: "text-btn", type: "button", onClick: () => docPicker.click() }, icon("plus", 16), "PDF 올리기");
+  const q = docQuery.trim();
+  let body;
+  if (docView.length) body = h("ul", { class: "doc-list", role: "list" }, docView.map(docRowEl));
+  else if (q) body = h("p", { class: "folder-empty" }, `“${q}” 와 맞는 PDF 가 없어요`);
+  else body = h("div", { class: "doc-empty" }, h("p", { class: "folder-empty" }, docsAll().length ? "이 폴더에는 PDF 가 없어요" : "아직 올린 PDF 가 없어요"), upload);
+  box.replaceChildren(...[
+    folderPanel ? folderPanelEl() : null,
+    docSelect ? h("p", { class: "album-note" }, "고른 순서대로 병합돼요. 원본은 그대로 남아요.") : h("p", { class: "album-note" }, "여기에 끌어다 놓아도 올라가요 · 파일당 4MB · 팀 모두에게 보여요"),
+    body,
+  ].filter(Boolean));
+  const top = docsDialog.querySelector(".doc-seltop");
+  if (top && docSelect) top.replaceWith(selectTop());
 }
 
 function fillDocs(force = false) {
@@ -802,41 +886,55 @@ function fillDocs(force = false) {
   docsPending = false;
   if (docFolder !== "all" && docFolder !== "none" && !docFolders().some((f) => f.id === docFolder)) docFolder = "all"; // that folder is gone
   if (docSelect) docSelect = docSelect.filter((id) => docOf(id)); // drop PDFs someone else deleted
-  const scroll = docsDialog.scrollTop;
-  // originals newest first, each followed by the files made from it (oldest first), which follow its folder
-  const docs = docsAll()
-    .filter((d) => !d.parent && (docFolder === "all" || (docFolder === "none" ? !d.folder : d.folder === docFolder)))
-    .sort((a, b) => (a.at < b.at ? 1 : -1))
-    .flatMap((d) => [d, ...childDocs(state, d.id).sort((a, b) => (a.at < b.at ? -1 : 1))]);
-  docsDialog.replaceChildren(h("div", { class: "album-inner" },
-    h("header", { class: "album-head" },
-      h("h2", { class: "cal-title" }, "PDF"),
-      h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: () => animateClose(docsDialog) }, icon("x"))),
-    folderChips(),
-    folderPanel ? folderPanelEl() : null,
-    docSelect ? selectBar() : h("div", { class: "folder-actions" },
-      h("button", { class: "text-btn", type: "button", "aria-label": `PDF 파일 올리기${currentFolderId() ? ` (${folderName(currentFolderId())} 폴더)` : ""}`, onClick: () => docPicker.click() }, icon("plus", 16), "PDF 올리기"),
-      docsAll().length ? h("button", { class: "text-btn", type: "button", onClick: () => { docSelect = []; fillDocs(true); } }, icon("check", 16), "선택 (병합·이동·삭제)") : null),
-    h("p", { class: "album-note" }, docSelect
-      ? "고른 순서대로 병합돼요. 원본은 그대로 남아요."
-      : "PDF 를 이 창에 끌어다 놓아도 올라가요. 파일마다 4MB 까지, 팀 모두에게 보여요. 이름을 누르면 열리고, 연필로 페이지를 편집해요."),
-    docs.length
-      ? h("ul", { class: "doc-list", role: "list" }, docs.map(docRowEl))
-      : h("p", { class: "folder-empty" }, docsAll().length ? "이 폴더에는 PDF 가 없어요" : "아직 올린 PDF 가 없어요")));
-  docsDialog.scrollTop = scroll;
+  const scroll = docsDialog.querySelector(".doc-scroll")?.scrollTop ?? 0;
+  const barLeft = docsDialog.querySelector(".doc-folders")?.scrollLeft ?? 0;
+  const search = h("input", { class: "contact-input doc-search", type: "search", value: docQuery, placeholder: "이름으로 찾기 (/)", "aria-label": "PDF 이름 검색", autocomplete: "off", enterkeyhint: "search" });
+  search.addEventListener("input", () => { docQuery = search.value; paintDocList(); });
+  const sortLabel = SORTS.find(([k]) => k === docSort)?.[1] ?? "최신순";
+  const tools = docSelect ? selectTop() : h("div", { class: "folder-actions doc-tools" },
+    h("button", { class: "text-btn", type: "button", "aria-label": `PDF 파일 올리기${currentFolderId() ? ` (${folderName(currentFolderId())} 폴더)` : ""}`, onClick: () => docPicker.click() }, icon("plus", 16), "PDF 올리기"),
+    docsAll().length ? h("button", { class: "text-btn", type: "button", onClick: () => { docSelect = []; fillDocs(true); } }, icon("check", 16), "선택") : null,
+    h("span", { class: "spacer" }),
+    h("button", { class: "text-btn quiet", type: "button", title: "정렬 바꾸기", "aria-label": `정렬: ${sortLabel} — 누르면 바뀜`, onClick: () => {
+      docSort = SORTS[(SORTS.findIndex(([k]) => k === docSort) + 1) % SORTS.length][0];
+      try { storage.setItem(DOC_SORT_KEY, docSort); } catch { /* remembered for this visit only */ }
+      fillDocs(true);
+    } }, sortLabel));
+  docsDialog.replaceChildren(h("div", { class: "album-inner doc-shell" },
+    h("header", { class: "doc-head" },
+      h("div", { class: "album-head" },
+        h("h2", { class: "cal-title" }, "PDF"),
+        h("button", { class: "icon-btn", type: "button", title: "폴더 관리", "aria-label": "폴더 관리", "aria-expanded": folderPanel ? "true" : "false", onClick: () => { folderPanel = !folderPanel; fillDocs(true); } }, icon("folder")),
+        h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: () => animateClose(docsDialog) }, icon("x"))),
+      search,
+      tools),
+    h("div", { class: "doc-body" }, folderChips(), h("div", { class: "doc-scroll" })),
+    docSelect ? selectFoot() : null));
+  paintDocList();
+  const box = docsDialog.querySelector(".doc-scroll");
+  if (box) box.scrollTop = scroll;
+  const bar = docsDialog.querySelector(".doc-folders");
+  if (bar) bar.scrollLeft = barLeft;
 }
 
 function openDocs() {
   if (docsDialog) return;
   const dialog = h("dialog", { class: "cal album docs", "aria-label": "PDF" });
   docsDialog = dialog;
+  try { const v = storage.getItem(DOC_SORT_KEY); if (SORTS.some(([k]) => k === v)) docSort = v; } catch { /* default order */ }
   wireDialog(dialog);
-  dialog.addEventListener("close", () => { docsDialog = null; docSelect = null; folderPanel = false; dialog.remove(); });
+  dialog.addEventListener("keydown", (e) => {
+    const typingNow = e.target.matches?.("input, textarea, select");
+    if (e.key === "/" && !typingNow) { e.preventDefault(); dialog.querySelector(".doc-search")?.focus(); }
+    if (e.key === "Escape" && docSelect) { e.preventDefault(); e.stopPropagation(); docSelect = null; fillDocs(true); } // Esc leaves 선택 first, a second Esc closes
+  }, true);
+  dialog.addEventListener("close", () => { docsDialog = null; docSelect = null; folderPanel = false; docQuery = ""; dialog.remove(); });
   dialog.addEventListener("focusout", () => setTimeout(() => { if (docsPending) fillDocs(); }, 250));
   wireDocDrop(dialog);
   document.body.append(dialog);
   fillDocs(true);
   dialog.showModal();
+  revealFolderChip();
 }
 
 /**

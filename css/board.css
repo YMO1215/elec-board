@@ -816,11 +816,9 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .buyer-sheet .contact-input { width: 100%; }
 .buyer-preview { margin: 0; padding: 10px 12px; border-radius: var(--r-card); background: #fff; color: #f00; font-size: 20px; line-height: 26px; font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .buyer-sheet .folder-actions .spacer { flex: 1; }
-/* phones: five tools would squeeze the name to a few letters — the tools move to their own line under it */
+/* phones: the row keeps one line (name + pencil + ⋯); the other actions live in the ⋯ sheet */
 @media (max-width: 520px) {
-  .doc-row { flex-wrap: wrap; row-gap: 4px; padding-top: 8px; padding-bottom: 8px; }
-  .doc-row .doc-open { flex-basis: 100%; }
-  .doc-row > .icon-btn:first-of-type { margin-left: auto; }
+  .doc-row { gap: 8px; padding-right: 8px; }
 }
 .doc-row button.doc-open { padding: 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
 .doc-row.is-picked { box-shadow: inset 0 0 0 2px var(--tint); }
@@ -832,6 +830,38 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .doc-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 6px 8px; border-radius: var(--r-card); background: var(--fill); }
 .doc-selcount { flex: 1 1 100%; padding: 0 4px; font-size: 13px; line-height: 18px; color: var(--secondary-label); }
 .doc-selbar .text-btn:disabled { opacity: 0.4; pointer-events: none; }
+
+/* PDF 문서함 v2: fixed head, only the list scrolls; folders = one scrolling line (phone) or a sidebar (PC);
+   selection actions pinned to the bottom. Colours/radii are the existing tokens. */
+dialog.cal.docs { height: min(86dvh, 780px); max-height: calc(100dvh - 20px); overflow: hidden; }
+dialog.cal.docs[open] { display: flex; flex-direction: column; }
+.docs .doc-shell { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; padding: 0; }
+.doc-head { flex: none; display: grid; gap: 8px; padding: 16px 14px 6px; }
+.doc-search { min-height: 40px; }
+.doc-tools .spacer { flex: 1; }
+.doc-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.doc-folders { flex: none; display: flex; flex-wrap: nowrap; gap: 6px; padding: 4px 14px 10px; overflow-x: auto; scrollbar-width: none; }
+.doc-folders::-webkit-scrollbar { display: none; }
+.doc-folders .chip { flex: none; display: inline-flex; align-items: center; max-width: min(72vw, 16em); }
+.doc-folders .chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-folders .chip .n { flex: none; }
+.doc-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: grid; gap: 10px; align-content: start; padding: 2px 14px 14px; }
+.doc-empty { display: grid; justify-items: start; gap: 4px; }
+.doc-seltop { display: flex; align-items: center; gap: 4px; }
+.doc-seltop .doc-selcount { flex: 1; }
+.doc-selfoot { flex: none; display: flex; gap: 2px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); border-top: 0.5px solid var(--separator); background: var(--secondary-background); }
+.doc-selfoot .doc-act { flex: 1; min-width: 0; display: grid; justify-items: center; align-content: center; gap: 2px; min-height: 48px; padding: 6px 2px; border: 0; border-radius: var(--r-control); background: none; color: var(--tint); font-size: 12px; line-height: 16px; font-weight: 600; white-space: nowrap; }
+.doc-selfoot .doc-act:active { transform: scale(0.97); }
+.doc-selfoot .doc-act:disabled { opacity: 0.4; pointer-events: none; }
+.doc-selfoot .doc-act.is-danger { color: var(--destructive); }
+.sheet-row.is-danger { color: var(--destructive); }
+@media (min-width: 900px) {
+  dialog.cal.docs { width: min(920px, calc(100vw - 40px)); }
+  .doc-body { flex-direction: row; }
+  .doc-folders { flex-direction: column; width: 230px; padding: 4px 6px 14px 14px; overflow-x: hidden; overflow-y: auto; }
+  .doc-folders .chip { width: 100%; max-width: none; min-height: 36px; justify-content: space-between; border-color: transparent; background: none; text-align: left; }
+  .doc-folders .chip[aria-pressed="true"] { background: var(--tint); color: #fff; }
+}
 
 /* 영수증 검산 */
 .audit-sheet { width: min(560px, calc(100vw - 20px)); }

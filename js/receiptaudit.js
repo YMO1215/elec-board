@@ -42,13 +42,14 @@ export function auditReceipts(receipts, { expectedTotal = null } = {}) {
     const key = [r.approvalNo, r.seller, r.product].join("\u0001");
     let it = byKey.get(key);
     if (!it) {
-      it = { approvalNo: r.approvalNo, seller: r.seller, product: r.product, itemAmt: 0, shipAmt: 0, supply: 0, vat: 0, hasItem: false, pages: [] };
+      it = { approvalNo: r.approvalNo, seller: r.seller, product: r.product, itemAmt: 0, shipAmt: 0, supply: 0, vat: 0, hasItem: false, pages: [], rows: [] };
       byKey.set(key, it);
     }
     if (r.shipping) it.shipAmt += r.approved; else { it.itemAmt += r.approved; it.hasItem = true; }
     it.supply += Number.isInteger(r.supply) ? r.supply : 0;
     it.vat += Number.isInteger(r.vat) ? r.vat : 0;
     it.pages.push(where(r));
+    it.rows.push(r); // the receipt rows of this item, in source order (js/draftmatch.js orders pages by them)
   }
   const items = [...byKey.values()].map((it) => ({ ...it, total: it.itemAmt + it.shipAmt }));
   for (const it of items) {

@@ -13,11 +13,13 @@ import {
   MAX_DOCS, MAX_DOC_FOLDERS, addDoc, addDocFolder, childDocs, moveDocs, removeDocFolder, removeDocs, renameDoc, renameDocFolder, replaceDocFile,
 } from "./store.js";
 import { MAX_DOC_BYTES, deleteDocFiles, docProblem, docSrc, fetchDoc, uploadDoc } from "./doc.js";
-import { editPdf, markReceipt, mergePdfs, normAngle, planChanged, splitBuyerStamp } from "./pdfops.js";
+import { editPdf, markReceipt, mergePdfs, mergePlan, normAngle, planChanged, splitBuyerStamp } from "./pdfops.js";
 import { drawStampPreview, loadPdfLib, pageTexts, pdfViewer, textMeasurer, textPicture } from "./pdfkit.js";
-import { BUYER, buyerSpot, buyerText, highlightBox, receiptFields, receiptMarks } from "./receipt.js";
+import { BUYER, buyerSpot, buyerText, highlightBox, receiptFields, receiptMarks, rowsOf } from "./receipt.js";
 import { csvName, receiptCsv } from "./receiptcsv.js";
 import { auditReceipts } from "./receiptaudit.js";
+import { parseDraft } from "./draft.js";
+import { matchDraft } from "./draftmatch.js";
 import { SORTS, selectableIds, toggleAll, viewDocs } from "./docview.js";
 import { POLL_MS, createSync } from "./sync.js";
 import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
@@ -796,6 +798,7 @@ function selectFoot() {
   const act = (label, name, props = {}) => h("button", { class: "doc-act", type: "button", ...props }, icon(name, 18), h("span", {}, label));
   return h("div", { class: "doc-selfoot" },
     act("병합", "merge", { disabled: n < 2 ? true : null, title: n < 2 ? "2개 이상 고르세요" : "고른 순서대로 한 PDF 로 합치기", onClick: mergeSelected }),
+    act("맞춤병합", "merge", { disabled: n < 2 ? true : null, title: n < 2 ? "기안문 + 카드 영수증을 고르세요" : "기안문의 품목 순서대로 카드 영수증을 맞춰 병합 (금액 검산 포함)", onClick: () => openDraftMergeDialog([...docSelect]) }),
     act("검산", "check", { disabled: n ? null : true, title: "고른 영수증의 품목·금액이 맞는지 검산", onClick: () => openAuditDialog([...docSelect]) }),
     act("CSV", "table", { disabled: n ? null : true, title: "고른 영수증 PDF 를 한 CSV 로 정리", onClick: () => exportReceiptCsv([...docSelect]) }),
     act("이동", "move", { disabled: n ? null : true, title: "폴더로 이동", onClick: () => openDocFolderSheet([...docSelect]) }),
@@ -1061,6 +1064,108 @@ async function readReceipts(docs) {
     });
   }
   return receipts;
+}
+
+/** Read the picked PDFs: which one is the 기안문 (has the 품명·단가·수량·금액 table) and which pages are card receipts. */
+async function readDraftSelection(docs) {
+  const sources = [];
+  const pageCounts = [];
+  const receipts = [];
+  let draft = null;
+  let draftAt = -1;
+  for (const [at, doc] of docs.entries()) {
+    const bytes = await docBytes(doc);
+    const pages = await pageTexts(bytes);
+    sources.push(bytes);
+    pageCounts.push(pages.length);
+    const parsed = draft ? null : parseDraft(pages.flatMap((p) => rowsOf(p.items).map((r) => r.items.map((i) => i.str))));
+    if (parsed) { draft = parsed; draftAt = at; continue; }
+    pages.forEach((p, i) => {
+      const r = receiptFields(p.items);
+      if (r) receipts.push({ file: doc.name, doc: at, page: i + 1, ...r });
+    });
+  }
+  return { sources, pageCounts, receipts, draft, draftAt };
+}
+
+/**
+ * 기안문 맞춤 병합: the picked PDFs = one 기안문 + card receipts (any number of pages / files, any names).
+ * Pairs each 기안문 item with its receipts by amount, checks the sums, shows what differs, and merges
+ * 기안문 → receipts in the 기안문's item order (상품 then 배송비 of each item) → anything unrecognised last.
+ */
+async function openDraftMergeDialog(ids) {
+  const docs = ids.map(docOf).filter(Boolean);
+  if (docs.length < 2) { toast("기안문 PDF 와 카드 영수증 PDF 를 함께 고르세요"); return; }
+  toast("기안문과 영수증 읽는 중…");
+  let read;
+  try { read = await readDraftSelection(docs); } catch (err) { toast(`읽지 못했어요 — ${err.message}`); return; }
+  if (!read.draft) { toast("기안문(품명·단가·수량·금액 표가 있는 문서)을 찾지 못했어요"); return; }
+  if (!read.receipts.length) { toast("카드 영수증 내용을 찾지 못했어요"); return; }
+  const match = matchDraft(read.draft, read.receipts);
+  // page plan: every page of the 기안문, the receipts in the matched order, then every page not placed yet (in file order)
+  const plan = Array.from({ length: read.pageCounts[read.draftAt] }, (_, index) => ({ src: read.draftAt, index }));
+  for (const r of match.order) plan.push({ src: r.doc, index: r.page - 1 });
+  const placed = new Set(plan.map((p) => `${p.src}:${p.index}`));
+  let loose = 0;
+  read.pageCounts.forEach((n, src) => { for (let index = 0; index < n; index += 1) if (!placed.has(`${src}:${index}`)) { plan.push({ src, index }); loose += 1; } });
+
+  const fmt = (n) => (Number.isInteger(n) ? n.toLocaleString("ko-KR") : "—");
+  const errors = match.issues.filter((i) => i.level === "error");
+  const warns = match.issues.filter((i) => i.level === "warn");
+  const pagesText = (g) => (g ? g.rows.slice().sort((a, b) => (a.shipping - b.shipping) || (a.doc - b.doc) || (a.page - b.page)).map((r) => r.page).join("+") : "—");
+  const dialog = h("dialog", { class: "cal album audit-sheet", "aria-label": "기안문 맞춤 병합" });
+  const close = () => animateClose(dialog);
+  const go = h("button", { class: "text-btn doc-save", type: "button" }, match.ok ? "이 순서로 병합" : "불일치지만 병합");
+  go.addEventListener("click", async () => {
+    if (docsAll().length >= MAX_DOCS) { toast(`PDF 는 ${MAX_DOCS}개까지예요`); return; }
+    go.disabled = true;
+    toast("병합하는 중…");
+    try {
+      const merged = new Blob([await mergePlan(await loadPdfLib(), read.sources, plan)], { type: "application/pdf" });
+      const name = `${docs[read.draftAt].name} 외 ${docs.length - 1}개 (기안문 순서)`.slice(0, 80);
+      const url = await uploadDocBlob(merged, name);
+      const folder = currentFolderId() || docs[read.draftAt].folder;
+      const doc = { id: newId(), url, at: new Date().toISOString(), name, size: merged.size, folder };
+      commit((s) => addDoc(s, doc));
+      docSelect = null;
+      fillDocs(true);
+      close();
+      toast(`“${name}” 로 합쳤어요 (${plan.length}쪽)`);
+      refreshUsage();
+    } catch (err) {
+      toast(`병합하지 못했어요 — ${err.message}`);
+      go.disabled = false;
+    }
+  });
+  const shipDraft = read.draft.shipping?.amount ?? null;
+  const shipReceipt = match.audit.items.reduce((n, g) => n + g.shipAmt, 0);
+  const totalDraft = read.draft.total?.amount ?? null;
+  const cell = (v, bad) => h("span", { role: "cell", class: bad ? "is-bad" : null }, v);
+  dialog.append(h("div", { class: "album-inner" },
+    h("header", { class: "album-head" },
+      h("h2", { class: "cal-title" }, "기안문 맞춤 병합"),
+      h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: close }, icon("x"))),
+    h("p", { class: `audit-verdict ${match.ok ? "is-ok" : "is-bad"}` }, icon(match.ok ? "check" : "x", 16), " ",
+      match.ok ? `맞아요 — 기안문 품목 ${match.rows.length}개 · 영수증 ${read.receipts.length}장 · 합계 ${fmt(match.audit.total)}원` : `확인할 곳 ${errors.length}건`),
+    h("div", { class: "audit-table", role: "table", "aria-label": "기안문 품목과 영수증" },
+      h("div", { class: "audit-row audit-head", role: "row" }, h("span", { role: "columnheader" }, "기안문 품목"), h("span", { role: "columnheader" }, "기안문"), h("span", { role: "columnheader" }, "영수증"), h("span", { role: "columnheader" }, "쪽")),
+      match.rows.map((r) => h("div", { class: `audit-row${r.status === "ok" ? "" : " is-bad"}`, role: "row" },
+        h("span", { class: "audit-name", role: "cell" }, r.name, r.changed && r.prevAmount != null ? h("small", {}, `변경 전 ${fmt(r.prevAmount)}원`) : null),
+        cell(fmt(r.amount), r.status !== "ok"), cell(fmt(r.receiptAmount), r.status !== "ok"), cell(pagesText(r.group), r.status !== "ok"))),
+      match.extra.map((g) => h("div", { class: "audit-row is-bad", role: "row" },
+        h("span", { class: "audit-name", role: "cell" }, g.product || "(상품명 없음)", h("small", {}, "기안문에 없는 영수증")), cell("—", true), cell(fmt(g.itemAmt), true), cell(pagesText(g), true))),
+      shipDraft != null || shipReceipt ? h("div", { class: `audit-row${shipDraft === shipReceipt ? "" : " is-bad"}`, role: "row" },
+        h("span", { class: "audit-name", role: "cell" }, "배송비"), cell(fmt(shipDraft), shipDraft !== shipReceipt), cell(fmt(shipReceipt), shipDraft !== shipReceipt), cell("", false)) : null,
+      h("div", { class: "audit-row audit-sum", role: "row" },
+        h("span", { role: "cell" }, "합계"), cell(fmt(totalDraft), totalDraft !== match.audit.total), cell(fmt(match.audit.total), totalDraft !== match.audit.total), cell("", false))),
+    errors.length ? h("ul", { class: "audit-list is-bad" }, errors.map((i) => h("li", {}, h("b", {}, i.where), " ", i.msg))) : null,
+    warns.length ? h("ul", { class: "audit-list is-warn" }, warns.map((i) => h("li", {}, h("b", {}, i.where), " ", i.msg))) : null,
+    h("p", { class: "album-note" }, `병합 순서: 기안문 ${read.pageCounts[read.draftAt]}쪽 → 영수증 ${match.order.length}쪽(품목마다 상품 → 배송비)${loose ? ` → 알아보지 못한 ${loose}쪽(맨 뒤)` : ""}. 원본 PDF 는 그대로 남아요.`),
+    h("div", { class: "folder-actions" }, h("span", { class: "spacer" }), h("button", { class: "text-btn quiet", type: "button", onClick: close }, "취소"), go)));
+  dialog.addEventListener("close", () => dialog.remove());
+  wireDialog(dialog);
+  document.body.append(dialog);
+  dialog.showModal();
 }
 
 /**

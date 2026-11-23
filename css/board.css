@@ -877,6 +877,7 @@ dialog.cal.docs[open] { display: flex; flex-direction: column; }
 .audit-sum { font-weight: 600; background: var(--fill); }
 .audit-name { display: grid; min-width: 0; overflow-wrap: anywhere; }
 .audit-name small { font-size: 12px; color: var(--tertiary-label); }
+.audit-row > span.is-bad { color: var(--destructive); }
 .audit-list { margin: 0; padding-left: 18px; font-size: 12px; line-height: 16px; color: var(--secondary-label); }
 .audit-list.is-bad { color: var(--destructive); }
 .audit-list.is-warn { color: var(--warning); }

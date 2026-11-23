@@ -167,3 +167,21 @@ export async function hasBuyerStamp(lib, bytes) {
 export function planChanged(plan, pageCount) {
   return plan.length !== pageCount || plan.some((p, i) => p.index !== i || normAngle(p.rotate || 0) !== 0);
 }
+
+/**
+ * Pages from several PDFs in a chosen order -> one PDF. `sources` = [bytes…]; `plan` = [{ src, index }] where src is the
+ * position in `sources` and index the 0-based page. Pages not in the plan are left out. Returns Uint8Array.
+ */
+export async function mergePlan(lib, sources, plan) {
+  if (!Array.isArray(plan) || !plan.length) throw new Error("합칠 페이지가 없어요");
+  const docs = [];
+  for (const bytes of sources) docs.push(await open(lib, bytes));
+  const out = await lib.PDFDocument.create();
+  for (const { src, index } of plan) {
+    const doc = docs[src];
+    if (!doc || !Number.isInteger(index) || index < 0 || index >= doc.getPageCount()) throw new Error("페이지 계획이 PDF 와 맞지 않아요");
+    const [page] = await out.copyPages(doc, [index]);
+    out.addPage(page);
+  }
+  return out.save();
+}

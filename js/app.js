@@ -1282,11 +1282,11 @@ function openDocEditor(id) {
   const info = h("span", { class: "pe-info" }, "불러오는 중…");
   const zoomLabel = h("span", { class: "pe-zoom" }, "100%");
   const saveBtn = h("button", { class: "text-btn doc-save", type: "button", disabled: true }, "저장");
-  const toolBtn = (iconName, label, run) => h("button", { class: "icon-btn", type: "button", "aria-label": label, title: label, onClick: run }, icon(iconName));
-  const prevBtn = toolBtn("chevron-left", "선택한 페이지를 앞으로", () => move(sel, sel - 1));
-  const nextBtn = toolBtn("chevron-right", "선택한 페이지를 뒤로", () => move(sel, sel + 1));
-  const rotBtn = toolBtn("rotate", "선택한 페이지 오른쪽으로 돌리기", () => rotate());
-  const delBtn = h("button", { class: "icon-btn is-delete", type: "button", "aria-label": "선택한 페이지 삭제", title: "선택한 페이지 삭제", onClick: () => remove() }, icon("trash"));
+  const toolBtn = (iconName, label, run, key = "") => h("button", { class: "icon-btn", type: "button", "aria-label": label, title: key ? `${label} (${key})` : label, onClick: run }, icon(iconName));
+  const prevBtn = toolBtn("chevron-left", "선택한 페이지를 앞으로", () => move(sel, sel - 1), "Alt+←");
+  const nextBtn = toolBtn("chevron-right", "선택한 페이지를 뒤로", () => move(sel, sel + 1), "Alt+→");
+  const rotBtn = toolBtn("rotate", "선택한 페이지 오른쪽으로 돌리기", () => rotate(), "R");
+  const delBtn = h("button", { class: "icon-btn is-delete", type: "button", "aria-label": "선택한 페이지 삭제", title: "선택한 페이지 삭제 (Delete)", onClick: () => remove() }, icon("trash"));
   const resetBtn = h("button", { class: "text-btn quiet", type: "button", onClick: () => { plan = Array.from({ length: count }, (_, i) => ({ index: i, rotate: 0 })); sel = 0; refresh(); } }, icon("restore", 16), "원래대로");
   const stampNote = h("p", { class: "album-note pe-note", hidden: true }, "구매자 표시는 순서를 바꿔도 항상 1쪽에 표시되고, 저장할 때 1쪽으로 옮겨져요.");
 
@@ -1447,6 +1447,38 @@ function openDocEditor(id) {
     if (e.key === "PageUp") { e.preventDefault(); select(sel - 1); }
   });
   const resize = new ResizeObserver(() => drawView());
+
+  // Editor-wide keys, so they keep working after a click on a button or after the focused thumbnail was redrawn.
+  // ← → page · Alt+← → move the page · Home/End first/last · Delete/Backspace remove · R rotate · Ctrl+S save.
+  // (The list's own handler runs first and marks the keys it used with preventDefault.)
+  const keepFocus = () => { if (!dialog.contains(document.activeElement) || document.activeElement === dialog) view.focus({ preventScroll: true }); };
+  dialog.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") { e.preventDefault(); saveBtn.click(); return; }
+    if (e.defaultPrevented || !count || e.ctrlKey || e.metaKey) return;
+    if (e.target.matches?.("input, textarea, select")) return; // typing the file name
+    const inView = view.contains(e.target);
+    const scrollsSideways = inView && view.scrollWidth > view.clientWidth + 1; // zoomed in: ← → scroll the page itself
+    if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !(scrollsSideways && !e.altKey)) {
+      e.preventDefault();
+      const step = e.key === "ArrowLeft" ? -1 : 1;
+      if (e.altKey) move(sel, sel + step); else select(sel + step);
+      keepFocus();
+    } else if ((e.key === "Home" || e.key === "End") && !inView) {
+      e.preventDefault();
+      select(e.key === "Home" ? 0 : plan.length - 1, true);
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      const was = sel + 1;
+      const before = plan.length;
+      remove();
+      if (plan.length < before) toast(`${was}쪽을 지웠어요 — 「원래대로」로 되돌릴 수 있어요`);
+      keepFocus();
+    } else if ((e.key === "r" || e.key === "R") && !e.altKey) {
+      e.preventDefault();
+      rotate();
+      keepFocus();
+    }
+  });
 
   function refresh() {
     drawList();

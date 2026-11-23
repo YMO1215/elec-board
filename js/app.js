@@ -798,7 +798,7 @@ function selectFoot() {
   const act = (label, name, props = {}) => h("button", { class: "doc-act", type: "button", ...props }, icon(name, 18), h("span", {}, label));
   return h("div", { class: "doc-selfoot" },
     act("병합", "merge", { disabled: n < 2 ? true : null, title: n < 2 ? "2개 이상 고르세요" : "고른 순서대로 한 PDF 로 합치기", onClick: mergeSelected }),
-    act("맞춤병합", "merge", { disabled: n < 2 ? true : null, title: n < 2 ? "기안문 + 카드 영수증을 고르세요" : "기안문의 품목 순서대로 카드 영수증을 맞춰 병합 (금액 검산 포함)", onClick: () => openDraftMergeDialog([...docSelect]) }),
+    act("맞춤병합", "merge", { disabled: n < 2 ? true : null, title: n < 2 ? "기안문 + 카드 영수증을 고르세요" : "기안문의 품목 순서대로 카드 영수증만 맞춰 병합 (기안문은 제외, 금액 검산 포함)", onClick: () => openDraftMergeDialog([...docSelect]) }),
     act("검산", "check", { disabled: n ? null : true, title: "고른 영수증의 품목·금액이 맞는지 검산", onClick: () => openAuditDialog([...docSelect]) }),
     act("CSV", "table", { disabled: n ? null : true, title: "고른 영수증 PDF 를 한 CSV 로 정리", onClick: () => exportReceiptCsv([...docSelect]) }),
     act("이동", "move", { disabled: n ? null : true, title: "폴더로 이동", onClick: () => openDocFolderSheet([...docSelect]) }),
@@ -1091,7 +1091,8 @@ async function readDraftSelection(docs) {
 /**
  * 기안문 맞춤 병합: the picked PDFs = one 기안문 + card receipts (any number of pages / files, any names).
  * Pairs each 기안문 item with its receipts by amount, checks the sums, shows what differs, and merges
- * 기안문 → receipts in the 기안문's item order (상품 then 배송비 of each item) → anything unrecognised last.
+ * receipts in the 기안문's item order (상품 then 배송비 of each item) → anything unrecognised last.
+ * The 기안문 itself is only the reference: it is NOT part of the merged file.
  */
 async function openDraftMergeDialog(ids) {
   const docs = ids.map(docOf).filter(Boolean);
@@ -1102,12 +1103,15 @@ async function openDraftMergeDialog(ids) {
   if (!read.draft) { toast("기안문(품명·단가·수량·금액 표가 있는 문서)을 찾지 못했어요"); return; }
   if (!read.receipts.length) { toast("카드 영수증 내용을 찾지 못했어요"); return; }
   const match = matchDraft(read.draft, read.receipts);
-  // page plan: every page of the 기안문, the receipts in the matched order, then every page not placed yet (in file order)
-  const plan = Array.from({ length: read.pageCounts[read.draftAt] }, (_, index) => ({ src: read.draftAt, index }));
-  for (const r of match.order) plan.push({ src: r.doc, index: r.page - 1 });
+  // page plan: the receipts in the matched order, then every other page of the receipt files (in file order); never the 기안문
+  const plan = match.order.map((r) => ({ src: r.doc, index: r.page - 1 }));
   const placed = new Set(plan.map((p) => `${p.src}:${p.index}`));
   let loose = 0;
-  read.pageCounts.forEach((n, src) => { for (let index = 0; index < n; index += 1) if (!placed.has(`${src}:${index}`)) { plan.push({ src, index }); loose += 1; } });
+  read.pageCounts.forEach((n, src) => {
+    if (src === read.draftAt) return;
+    for (let index = 0; index < n; index += 1) if (!placed.has(`${src}:${index}`)) { plan.push({ src, index }); loose += 1; }
+  });
+  const rcptDocs = docs.filter((_, at) => at !== read.draftAt);
 
   const fmt = (n) => (Number.isInteger(n) ? n.toLocaleString("ko-KR") : "—");
   const errors = match.issues.filter((i) => i.level === "error");
@@ -1122,9 +1126,9 @@ async function openDraftMergeDialog(ids) {
     toast("병합하는 중…");
     try {
       const merged = new Blob([await mergePlan(await loadPdfLib(), read.sources, plan)], { type: "application/pdf" });
-      const name = `${docs[read.draftAt].name} 외 ${docs.length - 1}개 (기안문 순서)`.slice(0, 80);
+      const name = `${rcptDocs[0].name}${rcptDocs.length > 1 ? ` 외 ${rcptDocs.length - 1}개` : ""} (기안문 순서)`.slice(0, 80);
       const url = await uploadDocBlob(merged, name);
-      const folder = currentFolderId() || docs[read.draftAt].folder;
+      const folder = currentFolderId() || rcptDocs[0].folder;
       const doc = { id: newId(), url, at: new Date().toISOString(), name, size: merged.size, folder };
       commit((s) => addDoc(s, doc));
       docSelect = null;
@@ -1160,7 +1164,7 @@ async function openDraftMergeDialog(ids) {
         h("span", { role: "cell" }, "합계"), cell(fmt(totalDraft), totalDraft !== match.audit.total), cell(fmt(match.audit.total), totalDraft !== match.audit.total), cell("", false))),
     errors.length ? h("ul", { class: "audit-list is-bad" }, errors.map((i) => h("li", {}, h("b", {}, i.where), " ", i.msg))) : null,
     warns.length ? h("ul", { class: "audit-list is-warn" }, warns.map((i) => h("li", {}, h("b", {}, i.where), " ", i.msg))) : null,
-    h("p", { class: "album-note" }, `병합 순서: 기안문 ${read.pageCounts[read.draftAt]}쪽 → 영수증 ${match.order.length}쪽(품목마다 상품 → 배송비)${loose ? ` → 알아보지 못한 ${loose}쪽(맨 뒤)` : ""}. 원본 PDF 는 그대로 남아요.`),
+    h("p", { class: "album-note" }, `병합 결과: 영수증 ${match.order.length}쪽을 기안문 품목 순서대로(품목마다 상품 → 배송비)${loose ? ` + 알아보지 못한 ${loose}쪽(맨 뒤)` : ""}. 기안문은 병합에 넣지 않아요. 원본 PDF 는 그대로 남아요.`),
     h("div", { class: "folder-actions" }, h("span", { class: "spacer" }), h("button", { class: "text-btn quiet", type: "button", onClick: close }, "취소"), go)));
   dialog.addEventListener("close", () => dialog.remove());
   wireDialog(dialog);

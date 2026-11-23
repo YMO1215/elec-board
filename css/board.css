@@ -832,6 +832,25 @@ body.is-dragging, body.is-dragging * { cursor: grabbing; user-select: none; }
 .doc-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 6px 8px; border-radius: var(--r-card); background: var(--fill); }
 .doc-selcount { flex: 1 1 100%; padding: 0 4px; font-size: 13px; line-height: 18px; color: var(--secondary-label); }
 .doc-selbar .text-btn:disabled { opacity: 0.4; pointer-events: none; }
+
+/* 영수증 검산 */
+.audit-sheet { width: min(560px, calc(100vw - 20px)); }
+.audit-body { display: grid; gap: 10px; }
+.audit-verdict { display: flex; align-items: center; gap: 4px; margin: 0; font-size: 15px; line-height: 20px; font-weight: 600; }
+.audit-verdict.is-ok { color: var(--success); }
+.audit-verdict.is-bad { color: var(--destructive); }
+.audit-table { border-radius: var(--r-card); background: var(--secondary-background); border: 0.5px solid var(--separator); overflow: hidden; }
+.audit-row { display: grid; grid-template-columns: minmax(0, 1fr) 84px 64px 88px; gap: 6px; align-items: baseline; padding: 8px 10px; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.audit-row + .audit-row { border-top: 0.5px solid var(--separator); }
+.audit-row > span:not(.audit-name) { text-align: right; }
+.audit-head { font-size: 12px; color: var(--tertiary-label); }
+.audit-sum { font-weight: 600; background: var(--fill); }
+.audit-name { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.audit-name small { font-size: 12px; color: var(--tertiary-label); }
+.audit-list { margin: 0; padding-left: 18px; font-size: 12px; line-height: 16px; color: var(--secondary-label); }
+.audit-list.is-bad { color: var(--destructive); }
+.audit-list.is-warn { color: var(--warning); }
+@media (max-width: 480px) { .audit-row { grid-template-columns: minmax(0, 1fr) 72px 52px 76px; gap: 4px; padding: 8px; font-size: 12px; } }
 .doc-move { min-height: 36px; padding: 0 8px; border: 0.5px solid var(--separator); border-radius: var(--r-control); background: var(--secondary-background); color: var(--label); font: inherit; font-size: 15px; }
 .doc-move:disabled { opacity: 0.4; }
 .doc-save { font-weight: 600; }

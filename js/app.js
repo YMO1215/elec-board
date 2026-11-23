@@ -17,6 +17,7 @@ import { editPdf, markReceipt, mergePdfs, normAngle, planChanged, splitBuyerStam
 import { drawStampPreview, loadPdfLib, pageTexts, pdfViewer, textMeasurer, textPicture } from "./pdfkit.js";
 import { BUYER, buyerSpot, buyerText, highlightBox, receiptFields, receiptMarks } from "./receipt.js";
 import { csvName, receiptCsv } from "./receiptcsv.js";
+import { auditReceipts } from "./receiptaudit.js";
 import { POLL_MS, createSync } from "./sync.js";
 import { deletePhotoFiles, fetchPhoto, fileSafe, photoName, photoSrc, saveBlob, shrinkPhoto, uploadPhoto } from "./photo.js";
 import { makeZip } from "./zip.js";
@@ -786,6 +787,7 @@ function selectBar() {
     h("span", { class: "doc-selcount" }, n ? `${n}개 선택` : "PDF 를 고르세요"),
     h("button", { class: "text-btn", type: "button", disabled: n < 2 ? true : null, onClick: mergeSelected }, "병합"),
     h("button", { class: "text-btn", type: "button", disabled: n ? null : true, title: "고른 영수증 PDF 를 한 CSV 로 정리", onClick: () => exportReceiptCsv([...docSelect]) }, "CSV"),
+    h("button", { class: "text-btn", type: "button", disabled: n ? null : true, title: "고른 영수증의 품목·금액이 맞는지 검산", onClick: () => openAuditDialog([...docSelect]) }, "검산"),
     move,
     n ? armed(h("button", { class: "text-btn danger", type: "button" }, "삭제"), `${n}개 삭제`, async () => {
       if (await deleteDocs([...docSelect])) { docSelect = null; fillDocs(true); }
@@ -950,6 +952,79 @@ function openBuyerDialog(id) {
   input.select();
 }
 
+/** Every card-receipt page of the given PDFs, in order: [{ file, page, ...receiptFields }]. Non-receipt pages are skipped. */
+async function readReceipts(docs) {
+  const receipts = [];
+  for (const doc of docs) {
+    const pages = await pageTexts(await docBytes(doc));
+    pages.forEach((p, i) => {
+      const r = receiptFields(p.items);
+      if (r) receipts.push({ file: doc.name, page: i + 1, ...r });
+    });
+  }
+  return receipts;
+}
+
+/**
+ * 검산: read the picked receipt PDFs, group them into 품목 (상품 + 배송비), check the arithmetic and show the result.
+ * The amount box compares the receipts' total with a number the owner types (card bill, 지출결의).
+ */
+async function openAuditDialog(ids) {
+  const picked = new Set(ids);
+  const docs = ids.map(docOf).filter((d) => d && !(d.parent && picked.has(d.parent)));
+  if (!docs.length) return;
+  toast(docs.length > 1 ? `PDF ${docs.length}개에서 영수증 읽는 중…` : "영수증 읽는 중…");
+  let receipts;
+  try {
+    receipts = await readReceipts(docs);
+  } catch (err) {
+    toast(`영수증을 읽지 못했어요 — ${err.message}`);
+    return;
+  }
+  const dialog = h("dialog", { class: "cal album audit-sheet", "aria-label": "영수증 검산" });
+  const close = () => animateClose(dialog);
+  const input = h("input", { class: "contact-input", type: "text", inputmode: "numeric", placeholder: "카드 청구액·지출결의 금액 (원)", "aria-label": "비교할 금액", autocomplete: "off" });
+  const body = h("div", { class: "audit-body" });
+  const fmt = (n) => n.toLocaleString("ko-KR");
+  const paint = () => {
+    const digits = input.value.replace(/[^\d]/g, "");
+    const out = auditReceipts(receipts, { expectedTotal: digits ? Number(digits) : null });
+    const errors = out.issues.filter((i) => i.level === "error");
+    const warns = out.issues.filter((i) => i.level === "warn");
+    const verdict = out.ok
+      ? `맞아요 — 영수증 ${receipts.length}장, 품목 ${out.items.length}개, 합계 ${fmt(out.total)}원${out.compare ? " (입력한 금액과 같아요)" : ""}`
+      : `확인할 곳 ${errors.length}건`;
+    body.replaceChildren(...[
+      h("p", { class: `audit-verdict ${out.ok ? "is-ok" : "is-bad"}` }, icon(out.ok ? "check" : "x", 16), " ", verdict),
+      out.items.length ? h("div", { class: "audit-table", role: "table", "aria-label": "품목" },
+        h("div", { class: "audit-row audit-head", role: "row" }, h("span", { role: "columnheader" }, "품목"), h("span", { role: "columnheader" }, "상품"), h("span", { role: "columnheader" }, "배송"), h("span", { role: "columnheader" }, "합계")),
+        out.items.map((it) => h("div", { class: "audit-row", role: "row" },
+          h("span", { class: "audit-name", role: "cell" }, it.product || "(상품명 없음)", h("small", {}, it.seller)),
+          h("span", { role: "cell" }, fmt(it.itemAmt)), h("span", { role: "cell" }, it.shipAmt ? fmt(it.shipAmt) : "—"), h("span", { role: "cell" }, fmt(it.total)))),
+        h("div", { class: "audit-row audit-sum", role: "row" },
+          h("span", { role: "cell" }, `합계 ${out.items.length}개`),
+          h("span", { role: "cell" }, fmt(out.items.reduce((n, it) => n + it.itemAmt, 0))), h("span", { role: "cell" }, fmt(out.items.reduce((n, it) => n + it.shipAmt, 0))), h("span", { role: "cell" }, fmt(out.total)))) : null,
+      out.approvals.length ? h("ul", { class: "audit-list" }, out.approvals.map((a) =>
+        h("li", {}, `승인번호 ${a.approvalNo || "?"} · ${(a.date || "").slice(0, 10)} · ${a.count}장 · ${fmt(a.approved)}원 (공급 ${fmt(a.supply)} + 부가세 ${fmt(a.vat)})`))) : null,
+      errors.length ? h("ul", { class: "audit-list is-bad" }, errors.map((i) => h("li", {}, h("b", {}, i.where), " ", i.msg))) : null,
+      warns.length ? h("ul", { class: "audit-list is-warn" }, warns.map((i) => h("li", {}, h("b", {}, i.where), " ", i.msg))) : null,
+    ].filter(Boolean));
+  };
+  input.addEventListener("input", paint);
+  dialog.append(h("div", { class: "album-inner" },
+    h("header", { class: "album-head" },
+      h("h2", { class: "cal-title" }, "영수증 검산"),
+      h("button", { class: "icon-btn", type: "button", "aria-label": "닫기", onClick: close }, icon("x"))),
+    h("p", { class: "album-note" }, `${docs.map((d) => `“${d.name}”`).join(" · ")} — 같은 상품의 상품·배송비 영수증을 한 품목으로 묶고, 장마다 공급가액+부가세=승인금액, 부가세=승인금액÷11(내림)을 확인해요.`),
+    input,
+    body));
+  dialog.addEventListener("close", () => dialog.remove());
+  wireDialog(dialog);
+  document.body.append(dialog);
+  dialog.showModal();
+  paint();
+}
+
 /**
  * 영수증 정리 CSV: every receipt page of the given PDFs → one CSV (요약 · 판매자별 · 상세, totals as Excel formulas).
  * A 구매자 표시본 picked together with its original is skipped (same receipts twice).
@@ -960,14 +1035,7 @@ async function exportReceiptCsv(ids) {
   if (!docs.length) return;
   toast(docs.length > 1 ? `PDF ${docs.length}개에서 영수증 읽는 중…` : "영수증 읽는 중…");
   try {
-    const receipts = [];
-    for (const doc of docs) {
-      const pages = await pageTexts(await docBytes(doc));
-      pages.forEach((p, i) => {
-        const r = receiptFields(p.items);
-        if (r) receipts.push({ file: doc.name, page: i + 1, ...r });
-      });
-    }
+    const receipts = await readReceipts(docs);
     if (!receipts.length) throw new Error("카드 영수증 내용을 찾지 못했어요");
     const now = new Date();
     const madeAt = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())} ${two(now.getHours())}:${two(now.getMinutes())}`;
